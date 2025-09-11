@@ -18,7 +18,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import (
     DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker, Session
 )
-from contextlib import contextmanager
+# This import is no longer needed for the session functions
+# from contextlib import contextmanager 
 
 # --- Database Configuration ---
 # Establishes connections to PostgreSQL and/or SQLite based on environment variables.
@@ -84,6 +85,7 @@ class SongMetadata(Base):
 
 class UserLikedSong(Base):
     """
+
     Association table linking a User to a SongMetadata they have liked.
     This is the core of user preferences.
     """
@@ -110,13 +112,17 @@ def init_db() -> None:
         Base.metadata.create_all(bind=eng)
     print("Database initialization complete.")
 
-@contextmanager
+
+# --- MODIFIED ---
+# Removed @contextmanager and changed to a generator function
+# that FastAPI can manage for the request's lifetime.
 def get_read_session() -> Iterator[Session]:
     """Provides a database session for read operations, respecting the read preference."""
-    session = None
     db_key = DB_READ_PREFERENCE if DB_READ_PREFERENCE in sessions else next(iter(sessions.keys()), None)
     if not db_key:
         raise ConnectionError("No database is configured.")
+    
+    session: Optional[Session] = None
     try:
         session = sessions[db_key]()
         yield session
@@ -124,13 +130,14 @@ def get_read_session() -> Iterator[Session]:
         if session:
             session.close()
 
-@contextmanager
+# Removed @contextmanager and changed to a generator function
 def get_write_sessions() -> Iterator[List[Session]]:
     """Provides a list of all configured database sessions for write operations."""
-    sessions_list = []
+    sessions_list: List[Session] = []
     try:
         sessions_list = [s() for s in sessions.values()]
         yield sessions_list
     finally:
         for s in sessions_list:
             s.close()
+# --- END MODIFIED ---
