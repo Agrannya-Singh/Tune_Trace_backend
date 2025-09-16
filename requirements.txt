@@ -1,9 +1,42 @@
+# ==============================================================================
+# Core Application Framework
+# ==============================================================================
+# FastAPI is the modern, high-performance web framework for building APIs.
+# Uvicorn is the lightning-fast ASGI server that runs the FastAPI application.
 fastapi==0.116.1
-pydantic==2.11.7
-requests==2.32.5
 uvicorn==0.35.0
-python-dotenv==1.1.1
-SQLAlchemy==2.0.43
-scikit-learn==1.6.1
-redis==6.4.0
+
+# ==============================================================================
+# Database & ORM
+# ==============================================================================
+# SQLAlchemy is the Python SQL toolkit and Object Relational Mapper.
+# Psycopg2 is the most popular PostgreSQL database adapter for Python.
+# Alembic is the database migration tool for SQLAlchemy.
+sqlalchemy==2.0.43
 psycopg2-binary==2.9.10
+alembic==1.13.2
+
+# ==============================================================================
+# Data Validation & Configuration
+# ==============================================================================
+# Pydantic is used by FastAPI for data validation and settings management.
+# Python-dotenv is used to load environment variables from a .env file for development.
+pydantic==2.11.7
+python-dotenv==1.1.1
+
+# ==============================================================================
+# External Service Integration
+# ==============================================================================
+# Requests is the standard library for making HTTP requests (e.g., to YouTube API).
+# Redis is the Python client for Redis, used for caching.
+requests==2.32.5
+redis==5.0.7
+
+# ==============================================================================
+# Machine Learning & Data Handling (if used in suggestion logic)
+# ==============================================================================
+# Scikit-learn, NumPy, and SciPy are foundational libraries for scientific computing
+# and machine learning. Required if suggestion logic evolves to use ML models.
+scikit-learn==1.6.1
+numpy==2.3.3
+scipy==1.16.2
