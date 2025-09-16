@@ -1,1 +1,0 @@
-alembic is a sqlalchemy toolkit for version controlling and migrating tble schema 
