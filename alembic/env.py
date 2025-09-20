@@ -6,10 +6,15 @@ from sqlalchemy import pool
 from alembic import context
 from dotenv import load_dotenv
 import os
+import sys
 
-# --- CHANGE 1: Import your Base model ---
-# This line is crucial for autogenerate to work.
-from db import Base
+# Add the parent directory (project root, where db.py is) to sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Now you can import from db.py
+from db import Base  
+
+
 
 load_dotenv()
 
