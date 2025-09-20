@@ -24,27 +24,21 @@ from typing import Dict, List, Optional, Set
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import func,text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 # --- Local Application Imports ---
+# CORRECTED: Import the new single session dependency
 from db import (
     User,
     UserLikedSong,
     SongMetadata,
-    get_read_session,
-    get_write_sessions,
+    get_session,
+    SessionLocal, # Import SessionLocal for startup check
 )
-# main.py
-
-# ... other imports
-from db import sessions # Import the sessions dictionary
-
-# ...
-
 
 
 # ==============================================================================
@@ -52,10 +46,8 @@ from db import sessions # Import the sessions dictionary
 # ==============================================================================
 
 # Load environment variables from a .env file for local development.
-# In production, environment variables should be set directly.
 load_dotenv()
 
-# Configure logging to provide visibility into application behavior.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -68,20 +60,14 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
 REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", "3600"))
 
-# --- FastAPI App Initialization ---
 app = FastAPI(
     title="Hybrid Music Suggestion API",
     description="Generates music suggestions using collaborative and content-based filtering.",
     version="2.0.0",
-    # Add OpenAPI documentation URL.
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# --- CORS Middleware Configuration ---
-# NOTE FOR AUDITORS: The `allow_origins=["*"]` is permissive for development.
-# For production, this should be restricted to the specific frontend domain
-# e.g., `allow_origins=["https://www.your-frontend-app.com"]`.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -105,12 +91,8 @@ if REDIS_URL:
         logger.error(f"Failed to connect to Redis: {e}")
         redis_client = None
 
-# Critical check for the YouTube API key on startup.
 if not YOUTUBE_API_KEY:
-    logger.critical(
-        "FATAL: YOUTUBE_API_KEY environment variable not set. "
-        "The suggestion service will be non-functional."
-    )
+    logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
 
 
 # ==============================================================================
@@ -120,19 +102,13 @@ if not YOUTUBE_API_KEY:
 @app.on_event("startup")
 def on_startup() -> None:
     """
-    FastAPI startup event handler.
-    Connects to and verifies dependency services (DB, Redis).
+    FastAPI startup event handler. Verifies database connection.
     """
     logger.info("Application starting up...")
     
-    # 1. Check Database Connectivity
-    if not sessions:
-        logger.critical("FATAL: No database is configured. Set POSTGRES_DATABASE_URL.")
-        raise RuntimeError("Database configuration is missing.")
-    
+    # CORRECTED: Use the new SessionLocal to check the database connection
     try:
-        db_session_maker = next(iter(sessions.values()))
-        with db_session_maker() as session:
+        with SessionLocal() as session:
             session.execute(text("SELECT 1"))
         logger.info("Connection to the database established successfully.")
     except Exception as e:
@@ -140,7 +116,6 @@ def on_startup() -> None:
         raise RuntimeError(f"Database connection failed: {e}") from e
     
     logger.info("Application startup complete.")
-    pass
 
 
 # ==============================================================================
@@ -148,17 +123,14 @@ def on_startup() -> None:
 # ==============================================================================
 
 class SongSuggestion(BaseModel):
-    """Represents a single song suggestion returned to the client."""
     title: str
     artist: str
     youtube_video_id: str
 
 class SuggestionResponse(BaseModel):
-    """The response model for the /suggestions endpoint."""
     suggestions: List[SongSuggestion]
 
 class LikedSongsRequest(BaseModel):
-    """The request model for submitting liked songs."""
     user_id: str = Field(..., description="Unique client-generated identifier for the user.")
     songs: List[str] = Field(..., min_length=1, description="A list of song titles the user has liked.")
 
@@ -168,45 +140,23 @@ class LikedSongsRequest(BaseModel):
 # ==============================================================================
 
 class MusicRepository:
-    """
-    Handles all database interactions for users, songs, and their relationships.
-    This class abstracts the database operations away from the business logic.
-    """
+    """Handles all database interactions for users, songs, and their relationships."""
 
     def __init__(self, db: Session):
-        """
-        Initializes the repository with a database session.
-        :param db: An active SQLAlchemy Session object.
-        """
         self.db = db
 
     def get_or_create_user(self, user_id: str) -> User:
-        """
-        Retrieves a user by their ID, creating them if they don't exist.
-        :param user_id: The external unique identifier for the user.
-        :return: The User ORM object.
-        """
         user = self.db.query(User).filter_by(user_id=user_id).one_or_none()
         if not user:
             user = User(user_id=user_id)
             self.db.add(user)
-            self.db.flush()  # Use flush to get the user's ID without committing.
+            self.db.flush()
         return user
 
     def get_song_metadata_by_video_id(self, video_id: str) -> Optional[SongMetadata]:
-        """
-        Finds song metadata by its YouTube video ID.
-        :param video_id: The YouTube video ID.
-        :return: A SongMetadata object or None if not found.
-        """
         return self.db.query(SongMetadata).filter_by(video_id=video_id).one_or_none()
 
     def create_song_metadata(self, video_data: dict) -> SongMetadata:
-        """
-        Creates and stores a new SongMetadata record from video data.
-        :param video_data: A dictionary containing video metadata.
-        :return: The newly created SongMetadata object.
-        """
         song = SongMetadata(
             video_id=video_data["video_id"],
             title=video_data["title"],
@@ -218,13 +168,7 @@ class MusicRepository:
         return song
 
     def persist_user_likes(self, user: User, song_metadata_ids: Set[int]):
-        """
-        Synchronizes the user's liked songs with the provided set of song IDs.
-        :param user: The User object.
-        :param song_metadata_ids: A set of song metadata primary keys the user likes.
-        """
         existing_liked_ids = {like.song_id for like in user.likes}
-
         ids_to_add = song_metadata_ids - existing_liked_ids
         ids_to_remove = existing_liked_ids - song_metadata_ids
 
@@ -236,21 +180,15 @@ class MusicRepository:
 
         for song_id in ids_to_add:
             self.db.add(UserLikedSong(user_id=user.id, song_id=song_id))
-
+        
+        # A single commit for the entire transaction is more efficient
         self.db.commit()
 
     def get_collaborative_suggestions(self, user: User, limit: int) -> List[SongMetadata]:
-        """
-        Implements collaborative filtering by finding songs liked by "taste neighbors."
-        :param user: The target user for whom to generate suggestions.
-        :param limit: The maximum number of suggestions to return.
-        :return: A list of suggested SongMetadata objects.
-        """
         liked_song_ids = {like.song_id for like in user.likes}
         if not liked_song_ids:
             return []
 
-        # Subquery to find users who have liked at least one same song.
         similar_users_subquery = (
             self.db.query(UserLikedSong.user_id)
             .filter(UserLikedSong.song_id.in_(liked_song_ids))
@@ -258,14 +196,13 @@ class MusicRepository:
             .distinct()
         )
 
-        # Main query to find songs liked by those similar users.
         suggestions_query = (
             self.db.query(SongMetadata)
             .join(UserLikedSong)
             .filter(UserLikedSong.user_id.in_(similar_users_subquery))
-            .filter(SongMetadata.id.notin_(liked_song_ids)) # Exclude songs user already likes.
+            .filter(SongMetadata.id.notin_(liked_song_ids))
             .group_by(SongMetadata.id)
-            .order_by(func.count(SongMetadata.id).desc()) # Order by popularity.
+            .order_by(func.count(SongMetadata.id).desc())
             .limit(limit)
         )
         return suggestions_query.all()
@@ -279,23 +216,13 @@ class SuggestionService:
     """Orchestrates the business logic for finding and ranking song suggestions."""
 
     def __init__(self, api_key: str):
-        """
-        Initializes the service with the necessary API key.
-        :param api_key: The YouTube Data API key.
-        """
         self.api_key = api_key
 
     @lru_cache(maxsize=512)
     def _search_youtube_for_song(self, song_name: str) -> Optional[Dict]:
-        """
-        Searches YouTube for a song and returns its metadata. Uses LRU cache.
-        :param song_name: The name of the song to search for.
-        :return: A dictionary of video metadata or None.
-        """
         if not self.api_key:
             return None
         try:
-            # Sanitize query for better search results.
             query = re.sub(r'[^\w\s]', '', song_name).lower().strip()
             search_url = (
                 f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video"
@@ -306,7 +233,7 @@ class SuggestionService:
             items = resp.json().get('items', [])
             if not items:
                 return None
-
+            
             snippet = items[0]['snippet']
             return {
                 "video_id": items[0]['id']['videoId'],
@@ -319,11 +246,6 @@ class SuggestionService:
 
     @lru_cache(maxsize=256)
     def _get_content_based_suggestions(self, video_id: str) -> List[Dict]:
-        """
-        Gets 'related' videos from YouTube to use as content-based candidates.
-        :param video_id: The YouTube video ID to find related videos for.
-        :return: A list of related video metadata dictionaries.
-        """
         if not self.api_key:
             return []
         try:
@@ -334,7 +256,6 @@ class SuggestionService:
             resp = requests.get(related_url, timeout=5)
             resp.raise_for_status()
             items = resp.json().get('items', [])
-
             return [
                 {
                     "video_id": item['id']['videoId'],
@@ -348,39 +269,28 @@ class SuggestionService:
             return []
 
     def get_suggestions(self, user: User, repo: MusicRepository, num_suggestions: int = 10) -> List[Dict]:
-        """
-        Generates suggestions using a hybrid of collaborative and content-based methods.
-        :param user: The User object.
-        :param repo: The MusicRepository for database access.
-        :param num_suggestions: The desired number of final suggestions.
-        :return: A ranked list of song suggestion dictionaries.
-        """
         collaborative_raw = repo.get_collaborative_suggestions(user, limit=20)
-
         content_based_raw = []
         if user.likes:
             most_recent_like = sorted(user.likes, key=lambda x: x.created_at, reverse=True)[0]
             video_id_for_content = most_recent_like.song.video_id
             content_based_raw = self._get_content_based_suggestions(video_id_for_content)
 
-        # Combine and rank suggestions, boosting songs found by both methods.
         suggestion_pool: Dict[str, Dict] = {}
         for song in collaborative_raw:
             suggestion_pool[song.video_id] = {
                 "title": song.title, "artist": song.artist,
                 "youtube_video_id": song.video_id, "score": 1.0,
             }
-
         for song_data in content_based_raw:
             vid = song_data["video_id"]
             if vid in suggestion_pool:
-                suggestion_pool[vid]["score"] += 0.5  # Hybrid boost
+                suggestion_pool[vid]["score"] += 0.5
             else:
                 suggestion_pool[vid] = {
                     "title": song_data["title"], "artist": song_data["artist"],
                     "youtube_video_id": vid, "score": 0.8,
                 }
-
         if not suggestion_pool:
             logger.warning(f"No suggestions found for user {user.user_id}. Consider a fallback.")
             return []
@@ -393,13 +303,12 @@ class SuggestionService:
 # --- Dependency Injection ---
 # ==============================================================================
 
-def get_repo(db_session: Session = Depends(get_read_session)) -> MusicRepository:
-    """Dependency to get a MusicRepository with a read-only session."""
+# CORRECTED: Simplified to a single repository provider
+def get_repo(db_session: Session = Depends(get_session)) -> MusicRepository:
+    """Dependency to get a MusicRepository with a session."""
     return MusicRepository(db=db_session)
 
-def get_write_repos(db_sessions: List[Session] = Depends(get_write_sessions)) -> List[MusicRepository]:
-    """Dependency to get a list of MusicRepositories with write-enabled sessions."""
-    return [MusicRepository(db=s) for s in db_sessions]
+# The get_write_repos function is no longer needed and has been removed.
 
 def get_suggestion_service() -> SuggestionService:
     """Dependency to get an instance of the SuggestionService."""
@@ -413,13 +322,12 @@ def get_suggestion_service() -> SuggestionService:
 @app.post("/suggestions", response_model=SuggestionResponse, tags=["Suggestions"])
 async def post_suggestions(
     request: LikedSongsRequest,
-    user_repos_write: List[MusicRepository] = Depends(get_write_repos),
-    user_repo_read: MusicRepository = Depends(get_repo),
+    # CORRECTED: Depend on a single repository instance
+    repo: MusicRepository = Depends(get_repo),
     suggestion_service: SuggestionService = Depends(get_suggestion_service),
 ):
     """
     Accepts a user's liked songs, persists them, and returns personalized suggestions.
-    This is the primary endpoint of the service.
     """
     if not YOUTUBE_API_KEY:
         raise HTTPException(
@@ -427,29 +335,30 @@ async def post_suggestions(
             detail="Service unavailable: API key not configured.",
         )
 
-    # Persist Likes
+    # Persist Likes using the single repository
     song_metadata_ids_to_like = set()
-    write_repo = user_repos_write[0]
-
     for song_name in request.songs:
         video_info = suggestion_service._search_youtube_for_song(song_name)
         if not video_info:
             continue
-
-        song_meta = write_repo.get_song_metadata_by_video_id(video_info["video_id"])
+        
+        song_meta = repo.get_song_metadata_by_video_id(video_info["video_id"])
         if not song_meta:
-            song_meta = write_repo.create_song_metadata(video_info)
-
+            song_meta = repo.create_song_metadata(video_info)
+        
         song_metadata_ids_to_like.add(song_meta.id)
 
-    # Sync likes across all write-enabled databases.
-    for repo in user_repos_write:
-        user = repo.get_or_create_user(request.user_id)
-        repo.persist_user_likes(user, song_metadata_ids_to_like)
+    # Get the user and sync their liked songs in one transaction
+    # We must load the user's 'likes' relationship to perform the sync
+    user = repo.db.query(User).options(joinedload(User.likes)).filter(User.user_id == request.user_id).one_or_none()
+    if not user:
+        user = User(user_id=request.user_id)
+        repo.db.add(user)
+    
+    repo.persist_user_likes(user, song_metadata_ids_to_like)
 
-    # Generate Suggestions using the read replica for fresh data.
-    user = user_repo_read.get_or_create_user(request.user_id)
-    suggestions = suggestion_service.get_suggestions(user, user_repo_read)
+    # Generate Suggestions
+    suggestions = suggestion_service.get_suggestions(user, repo)
 
     if not suggestions:
         raise HTTPException(
@@ -462,7 +371,5 @@ async def post_suggestions(
 
 @app.get("/health", status_code=200, tags=["Health"])
 async def health_check():
-    """
-    Provides a simple health check endpoint to verify the service is running.
-    """
+    """Provides a simple health check endpoint to verify the service is running."""
     return {"status": "healthy"}
