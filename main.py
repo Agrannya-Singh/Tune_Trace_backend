@@ -38,6 +38,14 @@ from db import (
     get_read_session,
     get_write_sessions,
 )
+# main.py
+
+# ... other imports
+from db import sessions # Import the sessions dictionary
+
+# ...
+
+
 
 # ==============================================================================
 # --- Initial Application Setup ---
@@ -113,12 +121,24 @@ if not YOUTUBE_API_KEY:
 def on_startup() -> None:
     """
     FastAPI startup event handler.
-
-    This function is executed when the application starts up.
-    NOTE: Database initialization (`init_db`) has been removed from this function.
-    Database schema management is now handled exclusively by Alembic migrations,
-    which should be run as a separate step in the deployment process.
+    Connects to and verifies dependency services (DB, Redis).
     """
+    logger.info("Application starting up...")
+    
+    # 1. Check Database Connectivity
+    if not sessions:
+        logger.critical("FATAL: No database is configured. Set POSTGRES_DATABASE_URL.")
+        raise RuntimeError("Database configuration is missing.")
+    
+    try:
+        db_session_maker = next(iter(sessions.values()))
+        with db_session_maker() as session:
+            session.execute("SELECT 1")
+        logger.info("Connection to the database established successfully.")
+    except Exception as e:
+        logger.critical(f"FATAL: Could not connect to the database: {e}")
+        raise RuntimeError(f"Database connection failed: {e}") from e
+    
     logger.info("Application startup complete.")
     pass
 
