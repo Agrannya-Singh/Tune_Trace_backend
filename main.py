@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func,text
 from sqlalchemy.orm import Session, joinedload
 
 # --- Local Application Imports ---
@@ -133,7 +133,7 @@ def on_startup() -> None:
     try:
         db_session_maker = next(iter(sessions.values()))
         with db_session_maker() as session:
-            session.execute("SELECT 1")
+            session.execute(text("SELECT 1"))
         logger.info("Connection to the database established successfully.")
     except Exception as e:
         logger.critical(f"FATAL: Could not connect to the database: {e}")
