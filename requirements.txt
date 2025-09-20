@@ -1,0 +1,16 @@
+# Web Framework & Server
+fastapi
+uvicorn
+gunicorn
+
+# Database & Migrations
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Caching
+redis
+
+# Utilities & API Calls
+python-dotenv
+requests
