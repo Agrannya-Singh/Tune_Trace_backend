@@ -1,4 +1,3 @@
-# main.py
 """
 FastAPI application for the Hybrid Music Suggestion microservice.
 
@@ -19,6 +18,7 @@ import os
 import re
 from functools import lru_cache
 from typing import Dict, List, Optional, Set
+import urllib.parse
 
 # --- Third-Party Imports ---
 import redis
@@ -275,58 +275,92 @@ class SuggestionService:
             return None
         # Sanitize query for better search results.
         query = re.sub(r"[^\w\s]", "", song_name).lower().strip()
+        q_encoded = urllib.parse.quote(query)
         search_url = (
             "https://www.googleapis.com/youtube/v3/search"
-            f"?part=snippet&q={query}&type=video&videoCategoryId=10"
+            f"?part=snippet&q={q_encoded}&type=video&videoCategoryId=10"
             f"&maxResults=1&key={self.api_key}"
         )
-        # The request is wrapped in a try-except block to handle network errors.
-        resp = requests.get(search_url, timeout=5)
-        resp.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
-        items = resp.json().get("items", [])
-        if not items:
+        try:
+            resp = requests.get(search_url, timeout=5)
+            resp.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
+            items = resp.json().get("items", [])
+            if not items:
+                return None
+
+            snippet = items[0]["snippet"]
+            return {
+                "video_id": items[0]["id"]["videoId"],
+                "title": snippet["title"],
+                "artist": snippet["channelTitle"],
+            }
+        except requests.RequestException:
             return None
 
-        snippet = items[0]["snippet"]
-        return {
-            "video_id": items[0]["id"]["videoId"],
-            "title": snippet["title"],
-            "artist": snippet["channelTitle"],
-        }
+    @lru_cache(maxsize=256)
+    def _get_video_details(self, video_id: str) -> Optional[Dict]:
+        """
+        Fetches video details from the YouTube API to get snippet information like tags.
+        """
+        if not self.api_key:
+            return None
+        url = (
+            "https://www.googleapis.com/youtube/v3/videos"
+            f"?part=snippet&id={video_id}&key={self.api_key}"
+        )
+        try:
+            resp = requests.get(url, timeout=5)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            if not items:
+                return None
+            return items[0]
+        except requests.RequestException:
+            return None
 
     @lru_cache(maxsize=256)
     def _get_content_based_suggestions(self, video_id: str) -> List[Dict]:
         """
-        Fetches related videos from YouTube to serve as content-based suggestions.
+        Fetches content-based suggestions using a keyword search based on the video's tags or title.
+        This replaces the deprecated relatedToVideoId parameter.
         """
-        if not self.api_key:
+        details = self._get_video_details(video_id)
+        if not details:
             return []
-        related_url = (
+        snippet = details["snippet"]
+        tags = snippet.get("tags", [])
+        q = " ".join(tags[:5]) if tags else snippet["title"]
+        q_encoded = urllib.parse.quote(q)
+        search_url = (
             "https://www.googleapis.com/youtube/v3/search"
-            f"?part=snippet&relatedToVideoId={video_id}&type=video"
-            f"&videoCategoryId=10&maxResults=15&key={self.api_key}"
+            f"?part=snippet&q={q_encoded}&type=video"
+            f"&videoCategoryId=10&maxResults=16&key={self.api_key}"
         )
-        resp = requests.get(related_url, timeout=5)
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        return [
-            {
-                "video_id": item["id"]["videoId"],
-                "title": item["snippet"]["title"],
-                "artist": item["snippet"]["channelTitle"],
-            }
-            for item in items
-            if "videoId" in item.get("id", {})
-        ]
+        try:
+            resp = requests.get(search_url, timeout=5)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            related = [
+                {
+                    "video_id": item["id"]["videoId"],
+                    "title": item["snippet"]["title"],
+                    "artist": item["snippet"]["channelTitle"],
+                }
+                for item in items
+                if "videoId" in item.get("id", {}) and item["id"]["videoId"] != video_id
+            ]
+            return related[:15]
+        except requests.RequestException:
+            return []
 
     def get_suggestions(
-        self, user: User, repo: MusicRepository, num_suggestions: int = 10
+        self, user: User, repo: MusicRepository, num_suggestions: int = 15
     ) -> List[Dict]:
         """
         Generates a hybrid list of suggestions by combining collaborative and
         content-based results and ranking them by a simple scoring system.
         """
-        collaborative_raw = repo.get_collaborative_suggestions(user, limit=20)
+        collaborative_raw = repo.get_collaborative_suggestions(user, limit=30)
         content_based_raw = []
         if user.likes:
             # Use the most recently liked song to find content-based matches.
