@@ -1,18 +1,10 @@
 # main.py
-"""
-FastAPI application for the Hybrid Music Suggestion microservice.
-
-This application provides a RESTful API for generating personalized song
-suggestions. It accepts a user's liked songs and an optional genre,
-persists this data, and then returns a list of new suggestions. If no
-personalized suggestions are found, it falls back to popular songs from
-the specified genre.
-"""
 
 # --- Standard Library Imports ---
 import logging
 import os
 import re
+import json
 from functools import lru_cache
 from typing import Dict, List, Optional, Set
 
@@ -20,7 +12,7 @@ from typing import Dict, List, Optional, Set
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
@@ -43,11 +35,19 @@ logger = logging.getLogger(__name__)
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
+REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", 3600))  # Default to 1 hour
+
+if not YOUTUBE_API_KEY:
+    logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
+
+# ==============================================================================
+# --- FastAPI App Initialization ---
+# ==============================================================================
 
 app = FastAPI(
     title="Hybrid Music Suggestion API",
     description="Generates music suggestions using a hybrid model with a genre-based fallback.",
-    version="2.1.0",
+    version="2.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -61,7 +61,7 @@ app.add_middleware(
 )
 
 # ==============================================================================
-# --- Service Connections (Redis, etc.) ---
+# --- Service Connections ---
 # ==============================================================================
 
 redis_client: Optional[redis.Redis] = None
@@ -74,15 +74,13 @@ if REDIS_URL:
         logger.error(f"Failed to connect to Redis: {e}")
         redis_client = None
 
-if not YOUTUBE_API_KEY:
-    logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
-
 # ==============================================================================
 # --- FastAPI Application Events ---
 # ==============================================================================
 
 @app.on_event("startup")
 def on_startup() -> None:
+    """Verify database connection on application startup."""
     logger.info("Application starting up...")
     try:
         with SessionLocal() as session:
@@ -108,8 +106,30 @@ class SuggestionResponse(BaseModel):
 class LikedSongsRequest(BaseModel):
     user_id: str = Field(..., description="Unique client-generated identifier for the user.")
     songs: List[str] = Field(..., min_length=1, description="A list of song titles the user has liked.")
-    # NEW FIELD: Added an optional genre for the fallback mechanism.
-    genre: Optional[str] = Field(None, description="An optional genre to use for fallback suggestions.", example="Rock")
+    genre: Optional[str] = Field(None, description="An optional genre for fallback suggestions.", example="Rock")
+
+# ==============================================================================
+# --- Background Tasks ---
+# ==============================================================================
+
+def update_redis_user_likes(user_id: str, song_ids: set[int]):
+    """
+    Background task to update a user's liked songs in the Redis cache.
+    This runs after the HTTP response is sent.
+    """
+    if not redis_client:
+        logger.warning("Redis client not available. Skipping cache update for user %s.", user_id)
+        return
+
+    try:
+        redis_key = f"user_likes:{user_id}"
+        # Convert the set of integer IDs to a JSON string for storage
+        value = json.dumps(list(song_ids))
+        
+        redis_client.set(redis_key, value, ex=REDIS_TTL_SECONDS)
+        logger.info("Successfully cached liked songs for user %s in Redis.", user_id)
+    except Exception as e:
+        logger.error("Failed to update Redis cache for user %s: %s", user_id, e)
 
 # ==============================================================================
 # --- Repository Layer (Data Access) ---
@@ -143,49 +163,37 @@ class MusicRepository:
     def persist_user_likes(self, user: User, song_metadata_ids: Set[int]):
         existing_liked_ids = {like.song_id for like in user.likes}
         ids_to_add = song_metadata_ids - existing_liked_ids
-        ids_to_remove = existing_liked_ids - song_metadata_ids
-        if ids_to_remove:
-            self.db.query(UserLikedSong).filter(
-                UserLikedSong.user_id == user.id,
-                UserLikedSong.song_id.in_(ids_to_remove),
-            ).delete(synchronize_session="fetch")
+        
         if ids_to_add:
             new_likes = [UserLikedSong(user_id=user.id, song_id=song_id) for song_id in ids_to_add]
             self.db.add_all(new_likes)
+        
         self.db.commit()
-
-    def get_collaborative_suggestions(self, user: User, limit: int) -> List[SongMetadata]:
-        liked_song_ids = {like.song_id for like in user.likes}
-        if not liked_song_ids:
-            return []
-        similar_users_subquery = self.db.query(UserLikedSong.user_id).filter(
-            UserLikedSong.song_id.in_(liked_song_ids), UserLikedSong.user_id != user.id
-        ).distinct()
-        return self.db.query(SongMetadata).join(UserLikedSong).filter(
-            UserLikedSong.user_id.in_(similar_users_subquery),
-            SongMetadata.id.notin_(liked_song_ids),
-        ).group_by(SongMetadata.id).order_by(func.count(SongMetadata.id).desc()).limit(limit).all()
 
 # ==============================================================================
 # --- Service Layer (Business Logic) ---
 # ==============================================================================
 
 class SuggestionService:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: Optional[str]):
         self.api_key = api_key
 
     @lru_cache(maxsize=512)
     def _search_youtube_for_song(self, song_name: str) -> Optional[Dict]:
         if not self.api_key: return None
+        
         query = re.sub(r"[^\w\s]", "", song_name).lower().strip()
         if not query:
             logger.warning(f"Skipping empty search query from original input: '{song_name}'")
             return None
+            
         search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video&videoCategoryId=10&maxResults=1&key={self.api_key}"
         resp = requests.get(search_url, timeout=5)
         resp.raise_for_status()
         items = resp.json().get("items", [])
+        
         if not items: return None
+        
         snippet = items[0]["snippet"]
         return {"video_id": items[0]["id"]["videoId"], "title": snippet["title"], "artist": snippet["channelTitle"]}
 
@@ -206,40 +214,16 @@ class SuggestionService:
         ]
 
     def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
-        collaborative_raw = repo.get_collaborative_suggestions(user, limit=20)
-        content_based_raw = []
-        if user.likes:
-            most_recent_like = sorted(user.likes, key=lambda x: x.created_at, reverse=True)[0]
-            if most_recent_like.song:
-                # Use a standard search as a proxy for "content-based"
-                query = f"{most_recent_like.song.title} {most_recent_like.song.artist}"
-                search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video&videoCategoryId=10&maxResults=15&key={self.api_key}"
-                resp = requests.get(search_url, timeout=5)
-                resp.raise_for_status()
-                items = resp.json().get("items", [])
-                content_based_raw = [
-                    {"video_id": item['id']['videoId'], "title": item['snippet']['title'], "artist": item['snippet']['channelTitle']}
-                    for item in items if 'videoId' in item.get('id', {}) and item['id']['videoId'] != most_recent_like.song.video_id
-                ]
-
-        suggestion_pool: Dict[str, Dict] = {}
-        for song in collaborative_raw:
-            suggestion_pool[song.video_id] = {"title": song.title, "artist": song.artist, "youtube_video_id": song.video_id, "score": 1.0}
+        collaborative_raw = repo.get_collaborative_suggestions(user, limit=num_suggestions)
         
-        for song_data in content_based_raw:
-            vid = song_data["video_id"]
-            if vid in suggestion_pool:
-                suggestion_pool[vid]["score"] += 0.5
-            else:
-                suggestion_pool[vid] = {"title": song_data["title"], "artist": song_data["artist"], "youtube_video_id": vid, "score": 0.8}
-        
-        # MODIFIED: If the pool is empty, call the fallback method.
-        if not suggestion_pool:
-            logger.warning(f"No personalized suggestions found for user {user.user_id}. Triggering fallback.")
+        if not collaborative_raw:
+            logger.warning(f"No personalized suggestions for user {user.user_id}. Triggering fallback.")
             return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)
         
-        final_suggestions = sorted(suggestion_pool.values(), key=lambda x: x["score"], reverse=True)
-        return final_suggestions[:num_suggestions]
+        return [
+            {"title": song.title, "artist": song.artist, "youtube_video_id": song.video_id}
+            for song in collaborative_raw
+        ]
 
 # ==============================================================================
 # --- Dependency Injection ---
@@ -258,38 +242,47 @@ def get_suggestion_service() -> SuggestionService:
 @app.post("/suggestions", response_model=SuggestionResponse, tags=["Suggestions"])
 async def post_suggestions(
     request: LikedSongsRequest,
+    background_tasks: BackgroundTasks,
     repo: MusicRepository = Depends(get_repo),
     suggestion_service: SuggestionService = Depends(get_suggestion_service),
 ):
     if not YOUTUBE_API_KEY:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Service unavailable: YouTube API key is not configured.")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Service is not configured.")
     
     try:
+        # Resolve song names to YouTube video metadata
         song_metadata_ids_to_like = set()
         for song_name in request.songs:
             video_info = suggestion_service._search_youtube_for_song(song_name)
             if not video_info: continue
+            
             song_meta = repo.get_song_metadata_by_video_id(video_info["video_id"])
             if not song_meta:
                 song_meta = repo.create_song_metadata(video_info)
             song_metadata_ids_to_like.add(song_meta.id)
         
         user = repo.get_or_create_user(request.user_id)
+        
+        # 1. Perform the primary (PostgreSQL) write. The user waits for this.
         repo.persist_user_likes(user, song_metadata_ids_to_like)
         
-        # MODIFIED: Pass the genre from the request to the service layer.
+        # 2. Schedule the secondary (Redis) write. The user does NOT wait for this.
+        background_tasks.add_task(
+            update_redis_user_likes, user.user_id, song_metadata_ids_to_like
+        )
+        
+        # 3. Generate suggestions and return the response immediately.
         suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
-
-        # The service layer now handles the "not found" case, so we just return the results.
         return {"suggestions": suggestions}
 
     except requests.RequestException as e:
         logger.error(f"A critical YouTube API error occurred: {e}")
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "External service (YouTube API) is currently unavailable.")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "External service is unavailable.")
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "An internal server error occurred.")
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
 async def health_check():
+    """A simple endpoint to confirm the service is running."""
     return {"status": "healthy"}
