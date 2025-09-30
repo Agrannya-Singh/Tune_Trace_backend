@@ -35,7 +35,11 @@ logger = logging.getLogger(__name__)
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
-REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", 3600))  # Default to 1 hour
+try:
+    REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", "3600"))
+except ValueError:
+    logger.warning("Invalid REDIS_TTL_SECONDS environment variable, using default 3600")
+    REDIS_TTL_SECONDS = 3600
 
 if not YOUTUBE_API_KEY:
     logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
@@ -118,7 +122,7 @@ class LikedSongResponse(BaseModel):
 # --- Background Tasks ---
 # ==============================================================================
 
-def update_redis_user_likes(user_id: str, song_ids: set[int]):
+def update_redis_user_likes(user_id: str, song_ids: Set[int]):
     """
     Background task to update a user's liked songs in the Redis cache.
     This runs after the HTTP response is sent.
@@ -150,7 +154,12 @@ class MusicRepository:
         if not user:
             user = User(user_id=user_id)
             self.db.add(user)
-            self.db.flush()
+            try:
+                self.db.flush()
+            except Exception:
+                # Handle race condition: another request created the user
+                self.db.rollback()
+                user = self.db.query(User).options(joinedload(User.likes)).filter_by(user_id=user_id).one()
         return user
 
     def get_song_metadata_by_video_id(self, video_id: str) -> Optional[SongMetadata]:
@@ -283,14 +292,18 @@ class SuggestionService:
         search_term = f"Top {genre} songs" if genre else "Top Global Hits"
         search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={search_term}&type=video&videoCategoryId=10&maxResults={num_suggestions}&key={self.api_key}"
         
-        resp = requests.get(search_url, timeout=5)
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        
-        return [
-            {"title": item['snippet']['title'], "artist": item['snippet']['channelTitle'], "youtube_video_id": item['id']['videoId']}
-            for item in items if 'videoId' in item.get('id', {})
-        ]
+        try:
+            resp = requests.get(search_url, timeout=8)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            
+            return [
+                {"title": item['snippet']['title'], "artist": item['snippet']['channelTitle'], "youtube_video_id": item['id']['videoId']}
+                for item in items if 'videoId' in item.get('id', {})
+            ]
+        except requests.RequestException as e:
+            logger.error(f"Fallback YouTube API error (sanitized): Status {getattr(e.response, 'status_code', 'N/A')}")
+            return []
 
     def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
         collaborative_raw = repo.get_collaborative_suggestions(user, limit=num_suggestions)
@@ -363,7 +376,7 @@ async def post_suggestions(
 
 @app.get("/liked-songs", response_model=List[LikedSongResponse], tags=["User Data"])
 async def get_liked_songs(
-    user_id: str,
+    user_id: str = Field(..., max_length=255, min_length=1),
     repo: MusicRepository = Depends(get_repo),
 ):
     """Returns the list of liked songs for a given user.

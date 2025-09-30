@@ -8,9 +8,8 @@ to PostgreSQL when the environment variable is present.
 from __future__ import annotations
 
 import os
-from contextlib import contextmanager
 from datetime import datetime
-from typing import Dict, Iterator, List, Optional, Set
+from typing import Iterator, List, Optional, Set
 
 from sqlalchemy import (
     DateTime,
