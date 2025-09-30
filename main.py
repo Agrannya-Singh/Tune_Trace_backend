@@ -104,9 +104,9 @@ class SuggestionResponse(BaseModel):
     suggestions: List[SongSuggestion]
 
 class LikedSongsRequest(BaseModel):
-    user_id: str = Field(..., description="User email or unique identifier from OAuth.")
-    songs: List[str] = Field(..., min_length=1, description="A list of song titles the user has liked.")
-    genre: Optional[str] = Field(None, description="An optional genre for fallback suggestions.", example="Rock")
+    user_id: str = Field(..., description="User email or unique identifier from OAuth.", max_length=255)
+    songs: List[str] = Field(..., min_length=1, max_length=50, description="A list of song titles the user has liked (max 50).")
+    genre: Optional[str] = Field(None, description="An optional genre for fallback suggestions.", example="Rock", max_length=128)
 
 class LikedSongResponse(BaseModel):
     video_id: str
@@ -249,20 +249,32 @@ class SuggestionService:
     def _search_youtube_for_song(self, song_name: str) -> Optional[Dict]:
         if not self.api_key: return None
         
-        query = re.sub(r"[^\w\s]", "", song_name).lower().strip()
-        if not query:
-            logger.warning(f"Skipping empty search query from original input: '{song_name}'")
+        # Enhanced input sanitization - allow alphanumeric, spaces, hyphens, apostrophes
+        query = re.sub(r"[^\w\s\-']", "", song_name).lower().strip()
+        if not query or len(query) < 2:
+            logger.warning(f"Skipping invalid/short search query from original input: '{song_name}'")
             return None
+        
+        # Limit query length to prevent abuse
+        query = query[:200]
             
         search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video&videoCategoryId=10&maxResults=1&key={self.api_key}"
-        resp = requests.get(search_url, timeout=5)
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
         
-        if not items: return None
-        
-        snippet = items[0]["snippet"]
-        return {"video_id": items[0]["id"]["videoId"], "title": snippet["title"], "artist": snippet["channelTitle"]}
+        try:
+            resp = requests.get(search_url, timeout=8)
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            
+            if not items: return None
+            
+            snippet = items[0]["snippet"]
+            return {"video_id": items[0]["id"]["videoId"], "title": snippet["title"], "artist": snippet["channelTitle"]}
+        except requests.Timeout:
+            logger.error(f"YouTube API timeout for query: {query[:50]}...")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"YouTube API error (sanitized): Status {getattr(e.response, 'status_code', 'N/A')}")
+            return None
 
     def _get_fallback_suggestions(self, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
         logger.info(f"Executing fallback search for genre: {genre or 'Global Hits'}")
