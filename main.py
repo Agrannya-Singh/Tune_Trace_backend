@@ -104,9 +104,15 @@ class SuggestionResponse(BaseModel):
     suggestions: List[SongSuggestion]
 
 class LikedSongsRequest(BaseModel):
-    user_id: str = Field(..., description="Unique client-generated identifier for the user.")
+    user_id: str = Field(..., description="User email or unique identifier from OAuth.")
     songs: List[str] = Field(..., min_length=1, description="A list of song titles the user has liked.")
     genre: Optional[str] = Field(None, description="An optional genre for fallback suggestions.", example="Rock")
+
+class LikedSongResponse(BaseModel):
+    video_id: str
+    title: str
+    artist: str
+    created_at: str
 
 # ==============================================================================
 # --- Background Tasks ---
@@ -169,6 +175,67 @@ class MusicRepository:
             self.db.add_all(new_likes)
         
         self.db.commit()
+    
+    def get_user_liked_songs(self, user_id: str) -> List[tuple]:
+        """Returns list of (video_id, title, artist, created_at) for a user's liked songs."""
+        user = self.db.query(User).filter_by(user_id=user_id).one_or_none()
+        if not user:
+            return []
+        
+        results = (
+            self.db.query(
+                SongMetadata.video_id,
+                SongMetadata.title,
+                SongMetadata.artist,
+                UserLikedSong.created_at
+            )
+            .join(UserLikedSong, UserLikedSong.song_id == SongMetadata.id)
+            .filter(UserLikedSong.user_id == user.id)
+            .order_by(UserLikedSong.created_at.desc())
+            .all()
+        )
+        return results
+    
+    def get_collaborative_suggestions(self, user: User, limit: int = 10) -> List[SongMetadata]:
+        """Get song suggestions based on collaborative filtering.
+        
+        Finds songs liked by users with similar taste (users who liked the same songs).
+        """
+        if not user.likes:
+            return []
+        
+        # Get songs liked by this user
+        user_liked_song_ids = user.get_liked_song_ids()
+        
+        # Find other users who liked the same songs
+        similar_users = (
+            self.db.query(User.id)
+            .join(UserLikedSong)
+            .filter(UserLikedSong.song_id.in_(user_liked_song_ids))
+            .filter(User.id != user.id)
+            .group_by(User.id)
+            .having(func.count(UserLikedSong.song_id) >= 2)  # At least 2 songs in common
+            .all()
+        )
+        
+        if not similar_users:
+            return []
+        
+        similar_user_ids = [u[0] for u in similar_users]
+        
+        # Get songs liked by similar users that the current user hasn't liked
+        recommendations = (
+            self.db.query(SongMetadata)
+            .join(UserLikedSong)
+            .filter(UserLikedSong.user_id.in_(similar_user_ids))
+            .filter(~SongMetadata.id.in_(user_liked_song_ids))
+            .group_by(SongMetadata.id)
+            .order_by(func.count(UserLikedSong.user_id).desc())  # Most popular among similar users
+            .limit(limit)
+            .all()
+        )
+        
+        return recommendations
 
 # ==============================================================================
 # --- Service Layer (Business Logic) ---
@@ -281,6 +348,38 @@ async def post_suggestions(
     except Exception as e:
         logger.exception(f"An unexpected error occurred: {e}")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "An internal server error occurred.")
+
+@app.get("/liked-songs", response_model=List[LikedSongResponse], tags=["User Data"])
+async def get_liked_songs(
+    user_id: str,
+    repo: MusicRepository = Depends(get_repo),
+):
+    """Returns the list of liked songs for a given user.
+    
+    Args:
+        user_id: User email or unique identifier from OAuth
+        
+    Returns:
+        List of liked songs with video_id, title, artist, and created_at timestamp
+    """
+    try:
+        liked_songs = repo.get_user_liked_songs(user_id)
+        
+        return [
+            LikedSongResponse(
+                video_id=video_id,
+                title=title,
+                artist=artist,
+                created_at=created_at.isoformat()
+            )
+            for video_id, title, artist, created_at in liked_songs
+        ]
+    except Exception as e:
+        logger.exception(f"Error fetching liked songs for user {user_id}: {e}")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve liked songs."
+        )
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
 async def health_check():
