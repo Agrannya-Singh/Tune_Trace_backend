@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
@@ -376,7 +376,7 @@ async def post_suggestions(
 
 @app.get("/liked-songs", response_model=List[LikedSongResponse], tags=["User Data"])
 async def get_liked_songs(
-    user_id: str = Field(..., max_length=255, min_length=1),
+    user_id: str = Query(..., max_length=255, min_length=1),
     repo: MusicRepository = Depends(get_repo),
 ):
     """Returns the list of liked songs for a given user.
