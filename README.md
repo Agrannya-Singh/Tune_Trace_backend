@@ -9,69 +9,131 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 
 ## ✅ API Contract
 
-The REST API remains the same as V1
+### Endpoints
 
-1) POST /suggestions
-- Description: Get song suggestions based on multiple liked songs for a user.
-- Request body (JSON):
-```
+#### 1. POST /suggestions
+**Description**: Get AI-powered song suggestions based on user's liked songs using collaborative filtering.
+
+**Request Body** (JSON):
+```json
 {
-  "user_id": "user-123",
-  "songs": ["Shape of You", "Blinding Lights", "Watermelon Sugar"]
+  "user_id": "user@example.com",
+  "songs": ["Shape of You - Ed Sheeran", "Blinding Lights - The Weeknd"],
+  "genre": "Pop"
 }
 ```
-- Response (200):
-```
+
+**Fields**:
+- `user_id` (required): User email or OAuth identifier (max 255 chars)
+- `songs` (required): Array of song titles, 1-50 items
+- `genre` (optional): Genre for fallback suggestions (max 128 chars)
+
+**Response** (200 OK):
+```json
 {
   "suggestions": [
     {
-      "title": "Queen - Somebody To Love",
-      "artist": "Queen Official",
-      "youtube_video_id": "kijpcUv-b8M"
+      "title": "Billie Eilish - bad guy",
+      "artist": "Billie Eilish",
+      "youtube_video_id": "kJQP7kiw5Fk"
     }
-    // ... more suggestions
   ]
 }
 ```
-- Errors: 400 (bad input), 404 (no matches and fallback failed), 500 (configuration)
 
-2) GET /liked-songs?user_id=xxx
-- Returns the list of liked songs stored for the given user.
-
-3) GET /health
-- Returns `{ "status": "healthy" }` if the service is running.
+**Errors**: 
+- 400 (invalid input - exceeds limits)
+- 500 (internal server error)
+- 503 (YouTube API unavailable)
 
 ---
 
-## 🔍 ML Suggestion Engine (Overview)
+#### 2. GET /liked-songs
+**Description**: Returns the list of songs a user has previously liked.
 
-Goal: Provide high‑quality, low‑latency song recommendations using only the YouTube Data API and lightweight in‑process modeling.
+**Query Parameters**:
+- `user_id` (required): User email or OAuth identifier
 
-Core approach: Content‑based ranking with TF‑IDF over YouTube metadata
-- Seed selection: For each input song string, the service searches YouTube (music category) and picks the top relevant video as the seed.
-- Related candidates: Uses YouTube's related videos API to retrieve candidate music videos.
-- Batch enrichment: Fetches candidate details in a single batch call (snippet, statistics, contentDetails) to minimize latency.
-- Text features: Builds a text corpus from title + channel name + description + tags.
-- TF‑IDF similarity: Computes TF‑IDF vectors and cosine similarity between the seed text and each candidate's text.
-- Heuristic score: Combines content similarity with metadata signals such as:
-  - Official video phrases in title
-  - Word overlap with seed title
-  - Same channel as seed
-  - View count scaling (light popularity prior)
-- Aggregation: Merges suggestions across multiple liked songs, deduplicates by video ID and title, sorts by score, and returns the top 5.
+**Example**: `GET /liked-songs?user_id=user@example.com`
 
-Caching and latency optimizations
-- Per‑request in‑process cache with TTL for combined suggestions.
-- Function‑level LRU cache for per‑song suggestion results.
-- Batch video details fetch to reduce round trips to YouTube.
+**Response** (200 OK):
+```json
+[
+  {
+    "video_id": "dQw4w9WgXcQ",
+    "title": "Rick Astley - Never Gonna Give You Up",
+    "artist": "Official Rick Astley",
+    "created_at": "2025-09-30T14:23:45.123456"
+  }
+]
+```
 
-Fallback mechanisms
-- If no suggestions are found across all liked songs, the service fetches from YouTube's most popular music videos (category 10). It prefers videos with high view counts and returns a high‑confidence popular track.
-- If even the popular feed is unavailable, the API returns a 404 with a clear error message.
+**Errors**: 
+- 500 (failed to retrieve liked songs)
 
-Persistence
-- Liked songs are saved per user via SQLAlchemy using SQLite by default.
-- Concurrent Postgres support via write-through replication is enabled when `POSTGRES_DATABASE_URL` (or a Postgres `DATABASE_URL`) is provided. Reads prefer Postgres by default and can be switched via `DB_READ_PREFERENCE`.
+---
+
+#### 3. GET /health
+**Description**: Health check endpoint to confirm service is running.
+
+**Response** (200 OK):
+```json
+{
+  "status": "healthy"
+}
+```
+
+---
+
+## 🔍 Recommendation Algorithm (Version 2.0)
+
+**Goal**: Provide high-quality, personalized song recommendations using collaborative filtering with YouTube Data API.
+
+### Hybrid Recommendation Approach
+
+#### Primary: Collaborative Filtering
+1. **User Identification**: Store user preferences by email/OAuth ID
+2. **Song Resolution**: Search YouTube for each liked song → Store metadata in database
+3. **Find Similar Users**: Query users who liked ≥2 same songs as current user
+4. **Generate Recommendations**: Return songs liked by similar users but not by current user
+5. **Ranking**: Sort by popularity among similar users (most liked first)
+
+#### Secondary: Content-Based Fallback
+- **Trigger**: No collaborative data available (new user or insufficient overlap)
+- **Method**: Search YouTube for popular songs by specified genre
+- **Default**: Global top hits if no genre specified
+- **Limit**: Returns up to 10 suggestions
+
+### Performance Optimizations
+
+**Caching Strategy**:
+- **LRU Cache**: 512-entry cache for YouTube search results (in-memory)
+- **Redis Cache**: User preferences with configurable TTL (default: 1 hour)
+- **Background Tasks**: Redis updates happen asynchronously (non-blocking)
+- **Database Indexing**: Optimized queries on user_id, song_id, video_id
+
+**Latency Targets**:
+- Database queries: <200ms (with Redis)
+- YouTube API calls: 5-8s timeout with error handling
+- Overall response: 40% faster with caching
+
+### Input Validation & Security
+
+**Request Limits** (to prevent DoS):
+- Max 50 songs per request
+- Max 255 chars for user_id
+- Max 128 chars for genre
+- Max 200 chars per song query
+
+**Input Sanitization**:
+- Alphanumeric + spaces, hyphens, apostrophes only
+- Minimum 2-character queries
+- Empty/invalid queries skipped with warnings
+
+**Error Handling**:
+- YouTube API timeouts handled gracefully
+- Sanitized error messages (no sensitive data leakage)
+- Comprehensive logging for debugging
 - 
 Client Layer: External applications that consume the API
 API Gateway: FastAPI with CORS middleware for cross-origin support
@@ -237,19 +299,93 @@ curl "https://song-suggest-microservice.onrender.com/health"
 
 ---
 
+## 📊 Database Schema
+
+### Tables
+
+#### users
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(255) UNIQUE NOT NULL,  -- OAuth email
+    name VARCHAR(255),                      -- Display name
+    email VARCHAR(255),                     -- Email address
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_users_user_id ON users(user_id);
+CREATE INDEX idx_users_email ON users(email);
+```
+
+#### song_metadata
+```sql
+CREATE TABLE song_metadata (
+    id SERIAL PRIMARY KEY,
+    video_id VARCHAR(64) UNIQUE NOT NULL,
+    title VARCHAR(512) NOT NULL,
+    artist VARCHAR(256) NOT NULL,
+    genre VARCHAR(128),
+    tags TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_song_video_id ON song_metadata(video_id);
+CREATE INDEX idx_song_genre ON song_metadata(genre);
+```
+
+#### user_liked_songs
+```sql
+CREATE TABLE user_liked_songs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    song_id INTEGER REFERENCES song_metadata(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(user_id, song_id)
+);
+```
+
+### Migration
+
+To update existing databases, run:
+```bash
+# Using Alembic
+alembic upgrade head
+
+# Or manually apply migration
+# See: alembic/versions/add_user_oauth_fields.py
+```
+
+---
+
 ## 🌐 Frontend Integration
 
-No changes required on the frontend. Continue calling the same endpoints and parsing the same JSON structure. Example (fetch):
-```
-async function getSuggestions(userId, songs) {
+**OAuth User Flow**:
+1. Frontend authenticates user via Google OAuth (NextAuth.js)
+2. Extract user email from session: `session.user.email`
+3. Pass email as `user_id` in API requests
+
+**Example (fetch)**:
+```javascript
+async function getSuggestions(userId, songs, genre = null) {
   const res = await fetch("https://song-suggest-microservice.onrender.com/suggestions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, songs })
+    body: JSON.stringify({ 
+      user_id: userId,  // user email from OAuth
+      songs: songs,     // max 50 songs
+      genre: genre      // optional
+    })
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return data.suggestions;
+}
+
+async function getLikedSongs(userId) {
+  const res = await fetch(
+    `https://song-suggest-microservice.onrender.com/liked-songs?user_id=${encodeURIComponent(userId)}`
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
 }
 ```
 
