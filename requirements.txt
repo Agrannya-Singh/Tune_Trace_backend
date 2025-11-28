@@ -14,3 +14,8 @@ redis
 # Utilities & API Calls
 python-dotenv
 requests
+
+# ML & Data Analysis
+scikit-learn
+numpy
+pandas

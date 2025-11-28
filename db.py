@@ -129,6 +129,17 @@ class SongMetadata(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
+    def to_dict(self) -> dict:
+        """Converts the SQLAlchemy model to a dictionary for the ML engine."""
+        return {
+            "id": self.id,
+            "video_id": self.video_id,
+            "title": self.title,
+            "artist": self.artist,
+            "genre": self.genre,
+            "tags": self.tags,
+        }
+
 
 class UserLikedSong(Base):
     """Association object linking a User to a SongMetadata they have liked."""

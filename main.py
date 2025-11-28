@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 
 # --- Local Application Imports ---
 from db import SessionLocal, SongMetadata, User, UserLikedSong, get_session
+from ml_engine import MLEngine
 
 # ==============================================================================
 # --- Initial Application Setup ---
@@ -43,6 +44,12 @@ except ValueError:
 
 if not YOUTUBE_API_KEY:
     logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
+
+# ==============================================================================
+# --- ML Engine Initialization ---
+# ==============================================================================
+
+ml_engine = MLEngine()
 
 # ==============================================================================
 # --- FastAPI App Initialization ---
@@ -102,7 +109,7 @@ def on_startup() -> None:
 class SongSuggestion(BaseModel):
     title: str
     artist: str
-    youtube_video_id: str
+    video_id: str = Field(..., alias="youtube_video_id") # Alias for backward compatibility if needed
 
 class SuggestionResponse(BaseModel):
     suggestions: List[SongSuggestion]
@@ -204,6 +211,26 @@ class MusicRepository:
             .all()
         )
         return results
+
+    def get_user_liked_songs_objects(self, user_id: str) -> List[SongMetadata]:
+        """Returns a list of SongMetadata objects for a user's liked songs."""
+        user = self.db.query(User).filter_by(user_id=user_id).one_or_none()
+        if not user:
+            return []
+        
+        return [
+            liked_song.song for liked_song in user.likes
+        ]
+
+    def get_candidate_songs(self, limit: int = 1000) -> List[SongMetadata]:
+        """Returns a list of candidate songs for recommendation."""
+        # Simple strategy: get the most recently updated songs
+        return (
+            self.db.query(SongMetadata)
+            .order_by(SongMetadata.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
     
     def get_collaborative_suggestions(self, user: User, limit: int = 10) -> List[SongMetadata]:
         """Get song suggestions based on collaborative filtering.
@@ -293,12 +320,8 @@ class SuggestionService:
         search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={search_term}&type=video&videoCategoryId=10&maxResults={num_suggestions}&key={self.api_key}"
         
         try:
-            resp = requests.get(search_url, timeout=8)
-            resp.raise_for_status()
-            items = resp.json().get("items", [])
-            
             return [
-                {"title": item['snippet']['title'], "artist": item['snippet']['channelTitle'], "youtube_video_id": item['id']['videoId']}
+                {"title": item['snippet']['title'], "artist": item['snippet']['channelTitle'], "video_id": item['id']['videoId']}
                 for item in items if 'videoId' in item.get('id', {})
             ]
         except requests.RequestException as e:
@@ -313,7 +336,7 @@ class SuggestionService:
             return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)
         
         return [
-            {"title": song.title, "artist": song.artist, "youtube_video_id": song.video_id}
+            {"title": song.title, "artist": song.artist, "video_id": song.video_id}
             for song in collaborative_raw
         ]
 
@@ -363,9 +386,25 @@ async def post_suggestions(
             update_redis_user_likes, user.user_id, song_metadata_ids_to_like
         )
         
-        # 3. Generate suggestions and return the response immediately.
-        suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
-        return {"suggestions": suggestions}
+        # 3. Fetch data for ML-driven recommendations
+        user_likes = repo.get_user_liked_songs_objects(user.user_id)
+        candidate_songs = repo.get_candidate_songs(limit=1000)
+
+        # 4. Run the ML engine to get content-based suggestions
+        ai_suggestions = ml_engine.recommend(
+            user_history=[s.to_dict() for s in user_likes],
+            all_songs=[s.to_dict() for s in candidate_songs],
+            top_n=10
+        )
+
+        # 5. Fallback to collaborative/genre-based suggestions if ML fails
+        if not ai_suggestions:
+            logger.warning(f"ML engine returned no suggestions for user {user.user_id}. Using fallback.")
+            ai_suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
+
+        # Ensure the final output matches the Pydantic model
+        response_suggestions = [SongSuggestion(title=s['title'], artist=s['artist'], video_id=s.get('video_id') or s.get('youtube_video_id')) for s in ai_suggestions]
+        return {"suggestions": response_suggestions}
 
     except requests.RequestException as e:
         logger.error(f"A critical YouTube API error occurred: {e}")
