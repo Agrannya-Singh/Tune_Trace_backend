@@ -2,17 +2,17 @@
 
 # --- Standard Library Imports ---
 import logging
-import os
 import re
 import json
-from functools import lru_cache
 from typing import Dict, List, Optional, Set
 
 # --- Third-Party Imports ---
+import asyncio
+import httpx
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
@@ -91,7 +91,9 @@ if REDIS_URL:
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """Verify database connection on application startup."""
+    """Initialize services and verify connections on application startup."""
+    # Initialize and store suggestion service
+    app.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY)
     logger.info("Application starting up...")
     try:
         with SessionLocal() as session:
@@ -101,6 +103,15 @@ def on_startup() -> None:
         logger.critical(f"FATAL: Could not connect to the database: {e}")
         raise RuntimeError(f"Database connection failed: {e}") from e
     logger.info("Application startup complete.")
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Close the httpx client gracefully on application shutdown."""
+    logger.info("Application shutting down...")
+    service = getattr(app.state, "suggestion_service", None)
+    if service:
+        await service.close()
+        logger.info("SuggestionService client closed.")
 
 # ==============================================================================
 # --- Pydantic Data Models (API Contracts) ---
@@ -280,36 +291,49 @@ class MusicRepository:
 class SuggestionService:
     def __init__(self, api_key: Optional[str]):
         self.api_key = api_key
+        self.client = httpx.AsyncClient(timeout=8.0)
 
-    @lru_cache(maxsize=512)
-    def _search_youtube_for_song(self, song_name: str) -> Optional[Dict]:
+    async def close(self):
+        await self.client.aclose()
+
+
+    async def _search_youtube_for_song_async(self, song_name: str) -> Optional[Dict]:
+        """
+        Async version of the search. Non-blocking!
+        """
         if not self.api_key: return None
         
-        # Enhanced input sanitization - allow alphanumeric, spaces, hyphens, apostrophes
-        query = re.sub(r"[^\w\s\-']", "", song_name).lower().strip()
-        if not query or len(query) < 2:
-            logger.warning(f"Skipping invalid/short search query from original input: '{song_name}'")
+        query = re.sub(r"[^\w\s\-']", "", song_name).lower().strip()[:200]
+        if not query:
             return None
-        
-        # Limit query length to prevent abuse
-        query = query[:200]
-            
-        search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={query}&type=video&videoCategoryId=10&maxResults=1&key={self.api_key}"
+
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "videoCategoryId": "10",
+            "maxResults": 1,
+            "key": self.api_key
+        }
         
         try:
-            resp = requests.get(search_url, timeout=8)
+            resp = await self.client.get(url, params=params)
             resp.raise_for_status()
             items = resp.json().get("items", [])
             
             if not items: return None
-            
             snippet = items[0]["snippet"]
-            return {"video_id": items[0]["id"]["videoId"], "title": snippet["title"], "artist": snippet["channelTitle"]}
-        except requests.Timeout:
-            logger.error(f"YouTube API timeout for query: {query[:50]}...")
+            return {
+                "video_id": items[0]["id"]["videoId"], 
+                "title": snippet["title"], 
+                "artist": snippet["channelTitle"]
+            }
+        except httpx.RequestError as e:
+            logger.error(f"Async Search Error for query '{query}': {e}")
             return None
-        except requests.RequestException as e:
-            logger.error(f"YouTube API error (sanitized): Status {getattr(e.response, 'status_code', 'N/A')}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during async search: {e}")
             return None
 
     def _get_fallback_suggestions(self, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
@@ -347,8 +371,8 @@ class SuggestionService:
 def get_repo(db_session: Session = Depends(get_session)) -> MusicRepository:
     return MusicRepository(db=db_session)
 
-def get_suggestion_service() -> SuggestionService:
-    return SuggestionService(api_key=YOUTUBE_API_KEY)
+def get_suggestion_service(request: Request) -> SuggestionService:
+    return request.app.state.suggestion_service
 
 # ==============================================================================
 # --- API Endpoints ---
@@ -365,10 +389,18 @@ async def post_suggestions(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Service is not configured.")
     
     try:
-        # Resolve song names to YouTube video metadata
+        # 1. Create a list of concurrent tasks
+        tasks = [
+            suggestion_service._search_youtube_for_song_async(song_name) 
+            for song_name in request.songs
+        ]
+        
+        # 2. Execute all searches in parallel
+        results = await asyncio.gather(*tasks)
+
+        # 3. Process the results
         song_metadata_ids_to_like = set()
-        for song_name in request.songs:
-            video_info = suggestion_service._search_youtube_for_song(song_name)
+        for video_info in results:
             if not video_info: continue
             
             song_meta = repo.get_song_metadata_by_video_id(video_info["video_id"])
