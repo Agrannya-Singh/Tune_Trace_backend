@@ -345,8 +345,18 @@ class SuggestionService:
         search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={search_term}&type=video&videoCategoryId=10&maxResults={num_suggestions}&key={self.api_key}"
         
         try:
+            response = requests.get(search_url)
+            response.raise_for_status()
+            data = response.json()
+            items = data.get("items", [])
+
             return [
-                {"title": item['snippet']['title'], "artist": item['snippet']['channelTitle'], "video_id": item['id']['videoId']}
+                {
+                    "title": item['snippet']['title'], 
+                    "artist": item['snippet']['channelTitle'], 
+                    "youtube_video_id": item['id']['videoId'],
+                    "score": 1.0
+                }
                 for item in items if 'videoId' in item.get('id', {})
             ]
         except requests.RequestException as e:
