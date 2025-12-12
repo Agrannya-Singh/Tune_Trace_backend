@@ -1,0 +1,29 @@
+{
+  "suggestions": [
+    {
+      "title": "Bohemian Rhapsody",
+      "artist": "Queen",
+      "youtube_video_id": "fJ9rUzIMcZQ"
+    },
+    {
+      "title": "Stairway to Heaven",
+      "artist": "Led Zeppelin",
+      "youtube_video_id": "qFq66gjB4gA"
+    },
+    {
+      "title": "Hotel California",
+      "artist": "Eagles",
+      "youtube_video_id": "098391Qxk-j"
+    },
+    {
+      "title": "Sweet Child O' Mine",
+      "artist": "Guns N' Roses",
+      "youtube_video_id": "1w7OgIMMRc4"
+    },
+    {
+      "title": "Smells Like Teen Spirit",
+      "artist": "Nirvana",
+      "youtube_video_id": "hTWKbfoikeg"
+    }
+  ]
+}

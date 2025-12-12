@@ -1,0 +1,9 @@
+{
+  "user_id": "dev.user@example.com",
+  "songs": [
+    "Come As You Are",
+    "Yesterday",
+    "Like a Rolling Stone"
+  ],
+  "genre": "Rock"
+}
