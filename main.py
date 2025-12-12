@@ -121,7 +121,7 @@ async def on_shutdown() -> None:
 class SongSuggestion(BaseModel):
     title: str
     artist: str
-    video_id: str = Field(..., alias="youtube_video_id") # Alias for backward compatibility if needed
+    youtube_video_id: str
 
 class SuggestionResponse(BaseModel):
     suggestions: List[SongSuggestion]
@@ -445,8 +445,15 @@ async def post_suggestions(
             logger.warning(f"ML engine returned no suggestions for user {user.user_id}. Using fallback.")
             ai_suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
 
-        # Ensure the final output matches the Pydantic model
-        response_suggestions = [SongSuggestion(title=s['title'], artist=s['artist'], video_id=s.get('video_id') or s.get('youtube_video_id')) for s in ai_suggestions]
+        # We explicitly map the data to our strict DTO.
+        response_suggestions = [
+            SongSuggestion(
+                title=s['title'],
+                artist=s['artist'],
+                youtube_video_id=s.get('video_id') or s.get('youtube_video_id')
+            )
+            for s in ai_suggestions
+        ]
         return {"suggestions": response_suggestions}
 
     except requests.RequestException as e:
