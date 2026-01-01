@@ -21,7 +21,7 @@ class LikedSongsRequest(BaseModel):
     songs: List[str] = Field(..., min_length=1, max_length=50,
                              description="A list of song titles the user has liked (max 50).")
     genre: Optional[str] = Field(
-        None, description="An optional genre for fallback suggestions.", example="Rock", max_length=128)
+        None, description="An optional genre for fallback suggestions.", json_schema_extra={"example": "Rock"}, max_length=128)
 
 
 class LikedSongResponse(BaseModel):

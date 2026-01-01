@@ -15,6 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 # --- Local Application Imports ---
+from db import SessionLocal
+from ml_engine import MLEngine
+from services import SuggestionService
+from repository import MusicRepository
 from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion, LikedSongResponse
 from dependencies import get_repo, get_suggestion_service
 from utils.metrics import track_latency
