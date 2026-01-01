@@ -418,3 +418,16 @@ CORS
 ```
 GET https://song-suggest-microservice.onrender.com/health (for internal testing of FastAPI instance)
 Response: { "status": "healthy" }
+```
+
+##  Testing (Bruno Collection)
+
+For contributors and developers, this repository includes a **Bruno** collection for testing the API.
+
+1.  **Install Bruno**: [https://www.usebruno.com/](https://www.usebruno.com/)
+2.  **Open Collection**: In Bruno, click "Open Collection" and select the `TuneTrace-Backend` folder in the root of this repo.
+3.  **Select Environment**: Choose "Production" from the environment dropdown (top right).
+4.  **Run Requests**:
+    *   **Health**: Check if API is running.
+    *   **Get Suggestions**: Trigger the ML recommendation engine.
+    *   **Get Liked Songs**: Verify database/cache persistence.

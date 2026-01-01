@@ -1,0 +1,22 @@
+meta {
+  name: Get Suggestions
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/suggestions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "user_id": "agrannya.singh2023@vitstudent.ac.in",
+    "songs": [
+      "Blinding Lights - The Weeknd",
+      "Starboy - The Weeknd"
+    ],
+    "genre": "pop"
+  }
+}
