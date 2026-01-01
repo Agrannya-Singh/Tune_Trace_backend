@@ -15,12 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 # --- Local Application Imports ---
-from db import SessionLocal
-from ml_engine import MLEngine
-from services import SuggestionService
-from repository import MusicRepository
 from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion, LikedSongResponse
 from dependencies import get_repo, get_suggestion_service
+from utils.metrics import track_latency
 
 # ==============================================================================
 # --- Initial Application Setup ---
@@ -135,7 +132,8 @@ def update_redis_user_likes(user_id: str, song_ids: Set[int]):
         # Convert the set of integer IDs to a JSON string for storage
         value = json.dumps(list(song_ids))
 
-        redis_client.set(redis_key, value, ex=REDIS_TTL_SECONDS)
+        with track_latency("Redis:Write"):
+            redis_client.set(redis_key, value, ex=REDIS_TTL_SECONDS)
         logger.info("Successfully cached liked songs for user %s in Redis.", user_id)
     except Exception as e:
         logger.error("Failed to update Redis cache for user %s: %s", user_id, e)
@@ -164,7 +162,8 @@ async def post_suggestions(
         ]
 
         # 2. Execute all searches in parallel
-        results = await asyncio.gather(*tasks)
+        with track_latency("YouTube:Search_Parallel"):
+            results = await asyncio.gather(*tasks)
 
         # 3. Process the results
         song_metadata_ids_to_like = set()
@@ -193,11 +192,12 @@ async def post_suggestions(
         candidate_songs = repo.get_candidate_songs(limit=1000)
 
         # 4. Run the ML engine to get content-based suggestions
-        ai_suggestions = ml_engine.recommend(
-            user_history=[s.to_dict() for s in user_likes],
-            all_songs=[s.to_dict() for s in candidate_songs],
-            top_n=10
-        )
+        with track_latency("MLEngine:Recommend"):
+            ai_suggestions = ml_engine.recommend(
+                user_history=[s.to_dict() for s in user_likes],
+                all_songs=[s.to_dict() for s in candidate_songs],
+                top_n=10
+            )
 
         # 5. Fallback to collaborative/genre-based suggestions if ML fails
         if not ai_suggestions:
@@ -230,15 +230,37 @@ async def get_liked_songs(
     repo: MusicRepository = Depends(get_repo),
 ):
     """Returns the list of liked songs for a given user.
-
-    Args:
-        user_id: User email or unique identifier from OAuth
-
-    Returns:
-        List of liked songs with video_id, title, artist, and created_at timestamp
+    Attempts to read from Redis cache first, falls back to PostgreSQL.
     """
     try:
-        liked_songs = repo.get_user_liked_songs(user_id)
+        # 1. Try to read from Redis Cache
+        if redis_client:
+            with track_latency("Redis:Read"):
+                cached_data = redis_client.get(f"user_likes:{user_id}")
+            
+            if cached_data:
+                logger.info(f"Cache HIT for user {user_id}")
+                song_ids = json.loads(cached_data)
+                
+                # Fetch minimal details from DB for the cached IDs
+                # (Optimization: We still need Title/Artist, so we hit DB for the subset)
+                with track_latency("PostgreSQL:Read_Cached"):
+                    liked_songs = repo.get_songs_by_ids(song_ids)
+                    
+                return [
+                    LikedSongResponse(
+                        video_id=s.video_id,
+                        title=s.title,
+                        artist=s.artist,
+                        created_at="from_cache" # For simplicity in this version
+                    )
+                    for s in liked_songs
+                ]
+
+        # 2. Fallback to PostgreSQL
+        logger.info(f"Cache MISS for user {user_id}. Fetching from DB.")
+        with track_latency("PostgreSQL:Read_Full"):
+            liked_songs = repo.get_user_liked_songs(user_id)
 
         return [
             LikedSongResponse(

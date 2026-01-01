@@ -131,3 +131,6 @@ class MusicRepository:
         )
 
         return recommendations
+    def get_songs_by_ids(self, song_ids: List[int]) -> List[SongMetadata]:
+        """Returns a list of SongMetadata objects for the given IDs."""
+        return self.db.query(SongMetadata).filter(SongMetadata.id.in_(song_ids)).all()
