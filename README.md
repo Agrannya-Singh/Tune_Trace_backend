@@ -419,6 +419,13 @@ CORS
 GET https://song-suggest-microservice.onrender.com/health (for internal testing of FastAPI instance)
 Response: { "status": "healthy" }
 ```
+##Metrics
+<img width="1496" height="767" alt="image" src="https://github.com/user-attachments/assets/4eb534d0-58a9-41d2-8f32-5e81319156ae" />
+mock.json as sent from terminal 
+
+<img width="1428" height="488" alt="image" src="https://github.com/user-attachments/assets/bde4f7ba-2229-43dd-ab3a-00e0a64016bc" />
+metrics as observed on the render logs.
+
 
 ##  Testing (Bruno Collection)
 
