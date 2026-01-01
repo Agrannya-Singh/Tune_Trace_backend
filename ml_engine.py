@@ -18,12 +18,12 @@ class MLEngine:
         for song in songs:
             # We weight the artist and genre heavily by repeating them
             # This makes the AI 'care' more about them than random tags
-            features = [
-                song.get('title', ''),
-                song.get('artist', '') * 2,  # Boost artist importance
-                song.get('genre', '') * 3,   # Boost genre importance
-                song.get('tags', '')
-            ]
+            title = song.get('title') or ''
+            artist = (song.get('artist') or '') * 2
+            genre = (song.get('genre') or '') * 3
+            tags = song.get('tags') or ''
+            
+            features = [title, artist, genre, tags]
             soup_list.append(" ".join(features))
         return soup_list
 
