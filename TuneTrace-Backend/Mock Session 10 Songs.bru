@@ -1,0 +1,30 @@
+meta {
+  name: Mock Session (10 Songs)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/suggestions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "user_id": "agrannya.singh2023@vitstudent.ac.in",
+    "songs": [
+      "Bohemian Rhapsody - Queen",
+      "Hotel California - Eagles",
+      "Sweet Child O' Mine - Guns N' Roses",
+      "Smells Like Teen Spirit - Nirvana",
+      "Billie Jean - Michael Jackson",
+      "Imagine - John Lennon",
+      "Rolling in the Deep - Adele",
+      "Shape of You - Ed Sheeran",
+      "Blinding Lights - The Weeknd",
+      "Uptown Funk - Mark Ronson ft. Bruno Mars"
+    ],
+    "genre": "pop"
+  }
+}
