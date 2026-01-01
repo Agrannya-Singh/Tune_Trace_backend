@@ -1,13 +1,13 @@
 
 
-## 🎵 Enhanced Music Suggestion API
+## Enhanced Music Suggestion API
 
 A FastAPI microservice that provides music suggestions using the YouTube Data API v3. The service analyzes a user's liked songs and returns similar tracks. It includes robust fallback mechanisms to always return relevant results when possible.
 
 -Production URL: https://song-suggest-microservice.onrender.com
 
 
-## ✅ API Contract
+##  API Contract
 
 ### Endpoints
 
@@ -85,7 +85,7 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 
 ---
 
-## 🔍 Recommendation Algorithm (Version 2.0)
+##  Recommendation Algorithm (Version 2.0)
 
 **Goal**: Provide high-quality, personalized song recommendations using collaborative filtering with YouTube Data API.
 
@@ -153,11 +153,11 @@ The architecture follows a clean separation of concerns with proper layering, ca
 ```mermaid
 %%{init: {"theme":"light"}%%
 graph TB
-  subgraph CLIENT["🎵 CLIENT LAYER"]
+  subgraph CLIENT[" CLIENT LAYER"]
     Client["Client Applications\nWeb • Mobile • Desktop"]
   end
 
-  subgraph GATEWAY["⚡ API GATEWAY"]
+  subgraph GATEWAY[" API GATEWAY"]
     CORS["CORS Middleware\nCross-Origin Resource Sharing"]
     FastAPI["FastAPI Server\nAsync • Fast • Modern"]
   end
@@ -168,7 +168,7 @@ graph TB
     GET_HEALTH["GET /health\nService Status Check"]
   end
 
-  subgraph CORE["🎯 CORE LOGIC"]
+  subgraph CORE["CORE LOGIC"]
     AUTH["Request Validator\nPydantic Models"]
     COMBINE["Suggestion Engine\ncombine_suggestions()"]
     YT_SUGGEST["YouTube Integration\nget_youtube_suggestions()"]
@@ -177,18 +177,18 @@ graph TB
     LOAD["Like Retrieval\n_load_user_likes()"]
   end
 
-  subgraph CACHE["💾 CACHING SYSTEM"]
+  subgraph CACHE[" CACHING SYSTEM"]
     MEM_CACHE["Memory Cache\nLRU Cache\nTTL: 3600s"]
     DB_CACHE["Database Cache\nQueryCache Table"]
   end
 
-  subgraph ML["🤖 ML PIPELINE"]
+  subgraph ML[" ML PIPELINE"]
     TFIDF["TF-IDF Vectorizer\nText Feature Extraction"]
     COSINE["Cosine Similarity\nContent Matching"]
     SCORING["Scoring Algorithm\nHeuristic + ML Fusion"]
   end
 
-  subgraph DATA["📊 DATA LAYER"]
+  subgraph DATA[" DATA LAYER"]
     SESSION["SQLAlchemy ORM\nSession Management"]
     subgraph MODELS["Database Models"]
       USER_MODEL["User"]
@@ -200,11 +200,11 @@ graph TB
     end
   end
 
-  subgraph EXTERNAL["🌐 EXTERNAL APIS"]
+  subgraph EXTERNAL[" EXTERNAL APIS"]
     YOUTUBE["YouTube Data API v3\nSearch • Videos • Related"]
   end
 
-  subgraph STORAGE["🗄️ STORAGE"]
+  subgraph STORAGE[" STORAGE"]
     SQLITE["SQLite Database\nmusic_recommender.db"]
   end
 
@@ -267,14 +267,9 @@ graph TB
   class CORS spotifyBlack
 ```
 
-The fix involved removing spaces after commas in the class assignments. The diagram now properly renders with the Spotify-inspired dark theme and green accents as intended.
 
-_Originally posted by @coderabbitai[bot] in https://github.com/Agrannya-Singh/Tune_Trace_backend/issues/1#issuecomment-3173417275_
-            
 
----
-
-## 🔌 Usage Examples
+##  Usage Examples
 
 curl (POST /suggestions)
 ```
@@ -299,7 +294,7 @@ curl "https://song-suggest-microservice.onrender.com/health"
 
 ---
 
-## 📊 Database Schema
+##  Database Schema
 
 ### Tables
 
@@ -356,7 +351,7 @@ alembic upgrade head
 
 ---
 
-## 🌐 Frontend Integration
+##  Frontend Integration
 
 **OAuth User Flow**:
 1. Frontend authenticates user via Google OAuth (NextAuth.js)
@@ -415,16 +410,11 @@ CORS
 
 ---
 
-## 🚀 Deployment Notes for Render
-
-- Ensure YOUTUBE_API_KEY is set as a secret.
-- If using Render Postgres, set POSTGRES_DATABASE_URL (or DATABASE_URL with a Postgres URL).
-- If using Render Redis, set REDIS_URL to the internal connection string.
-- Build and runtime are standard; scikit‑learn is included for TF‑IDF and cosine similarity. Render will build wheels automatically; no extra steps typically required.
+<img width="1306" height="180" alt="image" src="https://github.com/user-attachments/assets/ac4f89c4-e5ca-436f-954f-45b70bf77c6e" />
 
 ---
 
-## 🔎 Health Check
+##  Health Check
 ```
-GET https://song-suggest-microservice.onrender.com/health
+GET https://song-suggest-microservice.onrender.com/health (for internal testing of FastAPI instance)
 Response: { "status": "healthy" }
