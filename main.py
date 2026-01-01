@@ -184,7 +184,8 @@ async def post_suggestions(
         user = repo.get_or_create_user(request.user_id)
 
         # 1. Perform the primary (PostgreSQL) write. The user waits for this.
-        repo.persist_user_likes(user, song_metadata_ids_to_like)
+        with track_latency("PostgreSQL:Write_Likes"):
+            repo.persist_user_likes(user, song_metadata_ids_to_like)
 
         # 2. Schedule the secondary (Redis) write. The user does NOT wait for this.
         background_tasks.add_task(
@@ -192,8 +193,11 @@ async def post_suggestions(
         )
 
         # 3. Fetch data for ML-driven recommendations
-        user_likes = repo.get_user_liked_songs_objects(user.user_id)
-        candidate_songs = repo.get_candidate_songs(limit=1000)
+        with track_latency("PostgreSQL:Fetch_History"):
+            user_likes = repo.get_user_liked_songs_objects(user.user_id)
+        
+        with track_latency("PostgreSQL:Fetch_Candidates"):
+            candidate_songs = repo.get_candidate_songs(limit=1000)
 
         # 4. Run the ML engine to get content-based suggestions
         with track_latency("MLEngine:Recommend"):
