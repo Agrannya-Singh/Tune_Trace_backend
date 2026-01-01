@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class SuggestionService:
-    def __init__(self, api_key: Optional[str]):
+    def __init__(self, api_key: Optional[str], redis_client=None):
         self.api_key = api_key
         self.client = httpx.AsyncClient(timeout=8.0)
+        self.redis_client = redis_client
 
     async def close(self):
         await self.client.aclose()
@@ -28,14 +29,26 @@ class SuggestionService:
         if not self.api_key:
             return None
 
-        query = re.sub(r"[^\w\s\-']", "", song_name).lower().strip()[:200]
-        if not query:
+        clean_query = re.sub(r"[^\w\s\-']", "", song_name).lower().strip()[:200]
+        if not clean_query:
             return None
+
+        # 1. Check Redis Cache
+        if self.redis_client:
+            try:
+                cache_key = f"yt_search:{clean_query}"
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    import json
+                    logger.info(f"Redis Cache HIT for search: {clean_query}")
+                    return json.loads(cached)
+            except Exception as e:
+                logger.error(f"Redis Read Error: {e}")
 
         url = "https://www.googleapis.com/youtube/v3/search"
         params = {
             "part": "snippet",
-            "q": query,
+            "q": clean_query,
             "type": "video",
             "videoCategoryId": "10",
             "maxResults": 1,
@@ -48,15 +61,29 @@ class SuggestionService:
             items = resp.json().get("items", [])
 
             if not items:
+                # Cache empty result too (to avoid repeated failed searches)
+                if self.redis_client:
+                     self.redis_client.setex(f"yt_search:{clean_query}", 3600 * 24, "null") 
                 return None
+            
             snippet = items[0]["snippet"]
-            return {
+            result = {
                 "video_id": items[0]["id"]["videoId"],
                 "title": snippet["title"],
                 "artist": snippet["channelTitle"]
             }
+
+            # 2. Write to Redis Cache
+            if self.redis_client:
+                try:
+                    import json
+                    self.redis_client.set(f"yt_search:{clean_query}", json.dumps(result), ex=3600 * 24 * 7) # 1 week cache
+                except Exception as e:
+                    logger.error(f"Redis Write Error: {e}")
+
+            return result
         except httpx.RequestError as e:
-            logger.error(f"Async Search Error for query '{query}': {e}")
+            logger.error(f"Async Search Error for query '{clean_query}': {e}")
             return None
         except Exception as e:
             logger.error(f"An unexpected error occurred during async search: {e}")
