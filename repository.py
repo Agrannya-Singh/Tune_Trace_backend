@@ -13,15 +13,21 @@ class MusicRepository:
         self.db = db
 
     def get_or_create_user(self, user_id: str) -> User:
+        """
+        Retrieves a user by ID or creates a new one if not found.
+        
+        Implements a database-agnostic 'get-or-create' pattern using optimistic
+        insertion with rollback to handle concurrency race conditions safely.
+        """
         user = self.db.query(User).options(joinedload(
             User.likes)).filter_by(user_id=user_id).one_or_none()
+        
         if not user:
             user = User(user_id=user_id)
             self.db.add(user)
             try:
                 self.db.flush()
             except Exception:
-                # Handle race condition: another request created the user
                 self.db.rollback()
                 user = self.db.query(User).options(joinedload(
                     User.likes)).filter_by(user_id=user_id).one()
