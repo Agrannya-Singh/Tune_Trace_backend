@@ -108,7 +108,7 @@ sequenceDiagram
 
 * **Presentation Layer:** Next.js application hosting the interactive UI.
 * **Logic Layer:** FastAPI microservice deployed on Azure App Service.
-* **Caching Layer:** Redis instance (hosted on Render) providing sub-millisecond access to user history, configured with a 1-hour TTL (Time To Live).
+* **Caching Layer:** Redis instance (hosted on Render) providing low-millisecond access to user history, configured with a 1-hour TTL (Time To Live).
 * **Persistence Layer:** PostgreSQL database (hosted via Supabase/AWS) serving as the source of truth for user relations and song metadata.
 
 ---
