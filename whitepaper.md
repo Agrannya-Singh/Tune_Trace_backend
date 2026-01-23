@@ -93,7 +93,7 @@ sequenceDiagram
     alt Cache HIT (Fast Path)
         Cache-->>API: JSON List of IDs
         API->>DB: SELECT * FROM songs WHERE id IN (...)
-        Note right of API: Optimized partial fetch
+        Note right of API: Hydrating cached song IDs
     else Cache MISS (Slow Path)
         API->>DB: SELECT * FROM user_liked_songs JOIN metadata...
         DB-->>API: Full Result Set
