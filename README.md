@@ -2,7 +2,7 @@
 
 ## Enhanced Music Suggestion API
 
-A FastAPI microservice that provides music suggestions using the YouTube Data API v3. The service analyzes a user's liked songs and returns similar tracks. It includes robust fallback mechanisms to always return relevant results when possible.
+A FastAPI microservice that provides music suggestions using the YouTube Data API v3. The service analyzes a user's liked songs and returns similar tracks. It includes robust fallback mechanisms to always return relevant results when possible. sample
 
 -Production URL: https://song-suggest-microservice.onrender.com
 
