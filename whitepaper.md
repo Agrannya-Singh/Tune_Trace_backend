@@ -123,7 +123,7 @@ graph LR
         A[Push to 'main'] --> B(Trigger Workflow)
     end
 
-    subgraph Build_Job [CI: Build Job Ubuntu Latest]
+    subgraph Build_Job [CI: Build Job on Ubuntu 22.04]
         B --> C[Checkout Code]
         C --> D[Setup Python 3.11]
         D --> E[Install Dependencies]
