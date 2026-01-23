@@ -47,7 +47,7 @@ The implemented pipeline demonstrates three key technical advantages:
 
 1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (3x) tokens during feature string construction. This heuristic biases the vector space to prioritize stylistic and authorial similarity over incidental keyword matches in song titles.
 2. **Zero-Inference Latency:** By avoiding complex neural network inference in favor of linear algebra operations (Cosine Similarity on TF-IDF vectors), the system maintains low latency even as the candidate set scales.
-3. **Popularity Fallback Mechanism:** To mitigate the "filter bubble" effect common in content-based systems, the logic includes a fallback mechanism. If the ML engine returns insufficient confidence scores, the system retrieves trending entities from the "Popular Song" chart, ensuring the user is never presented with an empty state.
+3. **Popularity Fallback Mechanism:** To mitigate the "filter bubble" effect common in content-based systems, the logic includes a fallback mechanism. If the ML engine returns no recommendations (e.g., due to a lack of distinct user history or candidate songs), the system retrieves trending entities from the "Popular Song" chart, ensuring the user is never presented with an empty state.
 
 ---
 
