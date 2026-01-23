@@ -53,7 +53,7 @@ The implemented pipeline demonstrates three key technical advantages:
 
 ## 2. Unified Persistence Architecture
 
-The application utilizes a **Write-Behind Caching** pattern to decouple the high-throughput read requirements of the frontend from the transactional integrity of the primary database.
+The application utilizes a **Write-Through Caching** pattern with asynchronous cache updates to balance the high-throughput read requirements of the frontend with the transactional integrity of the primary database.
 
 ```mermaid
 sequenceDiagram
