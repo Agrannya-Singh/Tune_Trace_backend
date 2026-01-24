@@ -79,18 +79,13 @@ class MusicRepository:
 
     def get_user_liked_songs_objects(self, user_id: str) -> List[SongMetadata]:
         """Returns a list of SongMetadata objects for a user's liked songs."""
-        # Direct query ensures fresh data, bypassing the session identity map cache
-        # which might hold a stale User object with old 'likes' relationship data.
         user = self.db.query(User).filter_by(user_id=user_id).one_or_none()
         if not user:
             return []
 
-        return (
-            self.db.query(SongMetadata)
-            .join(UserLikedSong)
-            .filter(UserLikedSong.user_id == user.id)
-            .all()
-        )
+        return [
+            liked_song.song for liked_song in user.likes
+        ]
 
     def get_candidate_songs(self, limit: int = 1000) -> List[SongMetadata]:
         """Returns a list of candidate songs for recommendation."""

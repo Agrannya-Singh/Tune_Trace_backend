@@ -15,8 +15,8 @@ def test_suggestions_empty_payload():
     # Depending on model validation, this might be 422
     assert response.status_code in [422, 500, 400]
 
-#def test_suggestions_valid_payload(mocker):
+def test_suggestions_valid_payload(mocker):
     # Mocking MLEngine or services might be needed for a pure unit test, 
     # but here we test the endpoint integration.
     # We would need to mock the Supabase/DB part in services.py
-   # pass
+    pass
