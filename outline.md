@@ -1,5 +1,3 @@
-<!-- This is an auto-generated reply by CodeRabbit -->
-
 
 
 
@@ -10,7 +8,7 @@
 ```mermaid
 graph TB
     %% Environment & Configuration
-    subgraph ENV["🔧 Environment Configuration"]
+    subgraph ENV[" Environment Configuration"]
         direction TB
         ENV1["DATABASE_URL<br/><i>Legacy PostgreSQL</i>"]
         ENV2["SQLITE_DATABASE_URL<br/><i>Default: sqlite:///app.db</i>"]
@@ -22,7 +20,7 @@ graph TB
     end
 
     %% Caching Architecture (Multi-Tier)
-    subgraph CACHE_ARCH["🚀 Multi-Tier Caching Architecture"]
+    subgraph CACHE_ARCH[" Multi-Tier Caching Architecture"]
         direction TB
         
         subgraph L1["Level 1: Distributed Cache"]
@@ -30,24 +28,24 @@ graph TB
         end
         
         subgraph L2["Level 2: Application Cache"]
-            IN_MEM_CACHE["💾 In-Memory Suggestion Cache<br/>---<br/>• Per-instance cache<br/>• TTL: 3600s<br/>• Timestamp-based expiry<br/>• Fallback for Redis"]
+            IN_MEM_CACHE[" In-Memory Suggestion Cache<br/>---<br/>• Per-instance cache<br/>• TTL: 3600s<br/>• Timestamp-based expiry<br/>• Fallback for Redis"]
         end
         
         subgraph L3["Level 3: Compatibility Cache"]
-            LIKED_STORE["📦 Liked Songs Store<br/>---<br/>• Backward compatibility<br/>• In-memory per-instance<br/>• User preference cache"]
+            LIKED_STORE[" Liked Songs Store<br/>---<br/>• Backward compatibility<br/>• In-memory per-instance<br/>• User preference cache"]
         end
         
         subgraph L4["Level 4: Function Cache"]
-            LRU_CACHE["🔄 LRU Cache<br/>---<br/>• @lru_cache decorator<br/>• Max size: 128<br/>• YouTube API responses"]
+            LRU_CACHE[" LRU Cache<br/>---<br/>• @lru_cache decorator<br/>• Max size: 128<br/>• YouTube API responses"]
         end
         
         subgraph L5["Level 5: Persistent Query Cache"]
-            DB_CACHE["🗃️ Database QueryCache<br/>---<br/>• Persistent across restarts<br/>• Query result caching<br/>• best_video_id mapping"]
+            DB_CACHE[" Database QueryCache<br/>---<br/>• Persistent across restarts<br/>• Query result caching<br/>• best_video_id mapping"]
         end
     end
 
     %% Database Architecture
-    subgraph DB_ARCH["🗄️ Dual Database Architecture"]
+    subgraph DB_ARCH[" Dual Database Architecture"]
         direction TB
         
         subgraph ENGINES["Database Engines"]
@@ -61,43 +59,43 @@ graph TB
         end
         
         subgraph PHYSICAL["Physical Storage"]
-            SQLITE_DB["🗄️ SQLite Database<br/>app.db"]
-            POSTGRES_DB["🐘 PostgreSQL Database<br/>Production Instance"]
+            SQLITE_DB[" SQLite Database<br/>app.db"]
+            POSTGRES_DB[" PostgreSQL Database<br/>Production Instance"]
         end
     end
 
     %% Data Models
-    subgraph MODELS["📊 Data Models & Relationships"]
+    subgraph MODELS[" Data Models & Relationships"]
         direction TB
-        USER_MODEL["👤 User<br/>---<br/>• id: int (PK)<br/>• user_id: str (UK)<br/>• created_at: datetime<br/>• Relationship: 1:N likes"]
+        USER_MODEL[" User<br/>---<br/>• id: int (PK)<br/>• user_id: str (UK)<br/>• created_at: datetime<br/>• Relationship: 1:N likes"]
         
-        LIKES_MODEL["🎵 UserLikedSong<br/>---<br/>• id: int (PK)<br/>• user_id: int (FK)<br/>• song_name: str<br/>• created_at: datetime<br/>• Unique: (user_id, song_name)"]
+        LIKES_MODEL[" UserLikedSong<br/>---<br/>• id: int (PK)<br/>• user_id: int (FK)<br/>• song_name: str<br/>• created_at: datetime<br/>• Unique: (user_id, song_name)"]
         
-        VIDEO_MODEL["📹 VideoFeature<br/>---<br/>• id: int (PK)<br/>• video_id: str (UK)<br/>• title, channel_title<br/>• tags, description: text<br/>• view_count: int<br/>• duration, updated_at"]
+        VIDEO_MODEL[" VideoFeature<br/>---<br/>• id: int (PK)<br/>• video_id: str (UK)<br/>• title, channel_title<br/>• tags, description: text<br/>• view_count: int<br/>• duration, updated_at"]
         
-        QUERY_MODEL["🔍 QueryCache<br/>---<br/>• id: int (PK)<br/>• query: str (UK)<br/>• best_video_id: str<br/>• updated_at: datetime"]
+        QUERY_MODEL[" QueryCache<br/>---<br/>• id: int (PK)<br/>• query: str (UK)<br/>• best_video_id: str<br/>• updated_at: datetime"]
     end
 
     %% Operations Layer
     subgraph OPS["⚡ Database Operations"]
         direction LR
-        READ_OPS["📖 Read Operations<br/>get_read_session()"]
-        WRITE_OPS["✍️ Write Operations<br/>get_write_sessions()"]
-        INIT_OPS["🚀 Database Initialization<br/>init_db()"]
+        READ_OPS[" Read Operations<br/>get_read_session()"]
+        WRITE_OPS[" Write Operations<br/>get_write_sessions()"]
+        INIT_OPS[" Database Initialization<br/>init_db()"]
     end
 
     %% Application Layer
     subgraph APP_LAYER["🌐 Application Layer"]
         direction TB
-        FASTAPI["🚀 FastAPI Application<br/>---<br/>• CORS middleware<br/>• Environment validation<br/>• Graceful startup/shutdown"]
+        FASTAPI[" FastAPI Application<br/>---<br/>• CORS middleware<br/>• Environment validation<br/>• Graceful startup/shutdown"]
         
-        YOUTUBE_API["🎬 YouTube Data API<br/>---<br/>• Music recommendations<br/>• Video metadata<br/>• Search & filtering"]
+        YOUTUBE_API[" YouTube Data API<br/>---<br/>• Music recommendations<br/>• Video metadata<br/>• Search & filtering"]
     end
 
     %% External Services
-    subgraph EXTERNAL["🌍 External Services"]
+    subgraph EXTERNAL[" External Services"]
         REDIS_SERVER["🔴 Redis Server<br/>Optional External Cache"]
-        YT_SERVICE["🎬 YouTube API Service<br/>Google Cloud Platform"]
+        YT_SERVICE[" YouTube API Service<br/>Google Cloud Platform"]
     end
 
     %% Connections - Environment to Services
@@ -165,23 +163,23 @@ graph TB
     %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1a1a1a','primaryTextColor':'#ffffff','primaryBorderColor':'#4fc3f7','lineColor':'#666666','sectionBkgColor':'#0f0f0f','altSectionBkgColor':'#1a1a1a','gridColor':'#333333','tertiaryColor':'#2d2d2d'}}}%%
 ```
 
-## 🎯 Architecture Highlights
+##  Architecture Highlights
 
-**🔥 Multi-Tier Caching Strategy:**
+*🔥 Multi-Tier Caching Strategy:**
 - **Level 1**: Redis (Distributed, 1-hour TTL)
 - **Level 2**: In-memory suggestions cache (Per-instance fallback)
 - **Level 3**: Liked songs store (Backward compatibility)
 - **Level 4**: LRU cache (YouTube API responses, 128 entries)
 - **Level 5**: Database QueryCache (Persistent query results)
 
-**⚡ Performance Features:**
+** Performance Features:**
 - Write-through dual database strategy
 - Graceful Redis degradation
 - Configurable cache TTL
 - Smart cache key generation
 - JSON serialization for complex data
 
-**🛡️ Reliability & Resilience:**
+** Reliability & Resilience:**
 - Optional Redis with fallback mechanisms
 - Dual database redundancy
 - Environment-based configuration
@@ -189,6 +187,4 @@ graph TB
 - Backward compatibility maintenance
 
 
-
-_Originally posted by @coderabbitai[bot] in https://github.com/Agrannya-Singh/Tune_Trace_backend/issues/6#issuecomment-3234222200_
             
