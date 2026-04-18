@@ -4,6 +4,7 @@
 import logging
 import os
 import json
+from contextlib import asynccontextmanager
 from typing import List, Set, Optional
 
 # --- Third-Party Imports ---
@@ -53,15 +54,46 @@ if not YOUTUBE_API_KEY:
 ml_engine = MLEngine()
 
 # ==============================================================================
+# --- Application Lifespan ---
+# ==============================================================================
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Manages startup and shutdown for the application."""
+    # --- Startup ---
+    application.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY)
+    logger.info("Application starting up...")
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+        logger.info("Connection to the database established successfully.")
+    except Exception as e:
+        logger.critical(f"FATAL: Could not connect to the database: {e}")
+        raise RuntimeError(f"Database connection failed: {e}") from e
+    logger.info("Application startup complete.")
+
+    yield  # --- Application runs here ---
+
+    # --- Shutdown ---
+    logger.info("Application shutting down...")
+    service = getattr(application.state, "suggestion_service", None)
+    if service:
+        await service.close()
+        logger.info("SuggestionService client closed.")
+
+
+# ==============================================================================
 # --- FastAPI App Initialization ---
 # ==============================================================================
 
 app = FastAPI(
     title="Hybrid Music Suggestion API",
     description="Generates music suggestions using a hybrid model with a genre-based fallback.",
-    version="2.2.0",
+    version="2.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -86,45 +118,17 @@ if REDIS_URL:
         logger.error(f"Failed to connect to Redis: {e}")
         redis_client = None
 
-# ==============================================================================
-# --- FastAPI Application Events ---
-# ==============================================================================
 
-
-@app.on_event("startup")
-def on_startup() -> None:
-    """Initialize services and verify connections on application startup."""
-    # Initialize and store suggestion service
-    app.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY)
-    logger.info("Application starting up...")
-    try:
-        with SessionLocal() as session:
-            session.execute(text("SELECT 1"))
-        logger.info("Connection to the database established successfully.")
-    except Exception as e:
-        logger.critical(f"FATAL: Could not connect to the database: {e}")
-        raise RuntimeError(f"Database connection failed: {e}") from e
-    logger.info("Application startup complete.")
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    """Close the httpx client gracefully on application shutdown."""
-    logger.info("Application shutting down...")
-    service = getattr(app.state, "suggestion_service", None)
-    if service:
-        await service.close()
-        logger.info("SuggestionService client closed.")
 
 # ==============================================================================
 # --- Background Tasks ---
 # ==============================================================================
 
 
-def update_redis_user_likes(user_id: str, song_ids: Set[int]):
+def update_redis_user_likes(user_id: str, all_liked_ids: Set[int]):
     """
-    Background task to update a user's liked songs in the Redis cache.
-    This runs after the HTTP response is sent.
+    Background task to cache the user's FULL set of liked song IDs in Redis.
+    Receives the complete set (not just current request) to avoid partial overwrites.
     """
     if not redis_client:
         logger.warning(
@@ -133,12 +137,12 @@ def update_redis_user_likes(user_id: str, song_ids: Set[int]):
 
     try:
         redis_key = f"user_likes:{user_id}"
-        # Convert the set of integer IDs to a JSON string for storage
-        value = json.dumps(list(song_ids))
+        value = json.dumps(list(all_liked_ids))
 
         with track_latency("Redis:Write"):
             redis_client.set(redis_key, value, ex=REDIS_TTL_SECONDS)
-        logger.info("Successfully cached liked songs for user %s in Redis.", user_id)
+        logger.info("Successfully cached %d liked songs for user %s in Redis.",
+                    len(all_liked_ids), user_id)
     except Exception as e:
         logger.error("Failed to update Redis cache for user %s: %s", user_id, e)
 
@@ -187,16 +191,19 @@ async def post_suggestions(
         with track_latency("PostgreSQL:Write_Likes"):
             repo.persist_user_likes(user, song_metadata_ids_to_like)
 
-        # 2. Schedule the secondary (Redis) write. The user does NOT wait for this.
-        background_tasks.add_task(
-            update_redis_user_likes, user.user_id, song_metadata_ids_to_like
-        )
+        # 2. Schedule the secondary (Redis) write with the FULL liked set.
+        #    We compute user_liked_ids first, then pass it to the background task.
 
         # 3. Fetch data for ML-driven recommendations
         with track_latency("PostgreSQL:Fetch_History"):
             user_likes = repo.get_user_liked_songs_objects(user.user_id)
 
         user_liked_ids = {s.id for s in user_likes}
+
+        # Now schedule Redis cache update with the complete set
+        background_tasks.add_task(
+            update_redis_user_likes, user.user_id, user_liked_ids
+        )
 
         with track_latency("PostgreSQL:Fetch_Candidates"):
             candidate_songs = repo.get_candidate_songs(exclude_song_ids=user_liked_ids, limit=1000)
