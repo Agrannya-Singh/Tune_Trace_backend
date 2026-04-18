@@ -1,6 +1,7 @@
 # repository.py
 
 from typing import List, Optional, Set
+import logging
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -56,6 +57,7 @@ class MusicRepository:
             self.db.add_all(new_likes)
 
         self.db.commit()
+        self.db.refresh(user)
 
     def get_user_liked_songs(self, user_id: str) -> List[tuple]:
         """Returns list of (video_id, title, artist, created_at) for a user's liked songs."""
@@ -78,20 +80,31 @@ class MusicRepository:
         return results
 
     def get_user_liked_songs_objects(self, user_id: str) -> List[SongMetadata]:
-        """Returns a list of SongMetadata objects for a user's liked songs."""
-        user = self.db.query(User).filter_by(user_id=user_id).one_or_none()
-        if not user:
-            return []
+        """Returns a list of SongMetadata objects for a user's liked songs.
 
-        return [
-            liked_song.song for liked_song in user.likes
-        ]
-
-    def get_candidate_songs(self, limit: int = 1000) -> List[SongMetadata]:
-        """Returns a list of candidate songs for recommendation."""
-        # Simple strategy: get the most recently updated songs
+        Uses a direct JOIN query instead of relationship lazy-loading to
+        avoid stale identity-map data after persist_user_likes() commits.
+        """
         return (
             self.db.query(SongMetadata)
+            .join(UserLikedSong, UserLikedSong.song_id == SongMetadata.id)
+            .join(User, User.id == UserLikedSong.user_id)
+            .filter(User.user_id == user_id)
+            .all()
+        )
+
+    def get_candidate_songs(self, exclude_song_ids: Optional[Set[int]] = None, limit: int = 1000) -> List[SongMetadata]:
+        """Returns a list of candidate songs for recommendation.
+
+        Args:
+            exclude_song_ids: Set of SongMetadata IDs to exclude (e.g. user's liked songs).
+            limit: Maximum number of candidates to return.
+        """
+        query = self.db.query(SongMetadata)
+        if exclude_song_ids:
+            query = query.filter(~SongMetadata.id.in_(exclude_song_ids))
+        return (
+            query
             .order_by(SongMetadata.updated_at.desc())
             .limit(limit)
             .all()

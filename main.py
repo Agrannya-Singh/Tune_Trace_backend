@@ -195,9 +195,11 @@ async def post_suggestions(
         # 3. Fetch data for ML-driven recommendations
         with track_latency("PostgreSQL:Fetch_History"):
             user_likes = repo.get_user_liked_songs_objects(user.user_id)
-        
+
+        user_liked_ids = {s.id for s in user_likes}
+
         with track_latency("PostgreSQL:Fetch_Candidates"):
-            candidate_songs = repo.get_candidate_songs(limit=1000)
+            candidate_songs = repo.get_candidate_songs(exclude_song_ids=user_liked_ids, limit=1000)
 
         # 4. Run the ML engine to get content-based suggestions
         with track_latency("MLEngine:Recommend"):
