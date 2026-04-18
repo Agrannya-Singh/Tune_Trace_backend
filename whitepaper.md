@@ -43,12 +43,13 @@ graph TD
 
 ### Architectural Evaluation
 
-The implemented pipeline demonstrates three key technical advantages:
+The implemented pipeline demonstrates several key technical advantages over naive content-based systems:
 
-1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (3x) tokens during feature string construction. This heuristic biases the vector space to prioritize stylistic and authorial similarity over incidental keyword matches in song titles.
-2. **Zero-Inference Latency:** By avoiding complex neural network inference in favor of linear algebra operations (Cosine Similarity on TF-IDF vectors), the system maintains low latency even as the candidate set scales.
-3. **Popularity Fallback Mechanism:** To mitigate the "filter bubble" effect common in content-based systems, the logic includes a fallback mechanism. If the ML engine returns no recommendations (e.g., due to a lack of distinct user history or candidate songs), the system retrieves trending entities from the "Popular Song" chart, ensuring the user is never presented with an empty state.
-
+1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (3x) tokens during feature string construction using space-separated replication, ensuring proper TF-IDF vectorization counting without creating merged nonsense tokens.
+2. **Exponential Recency Decay:** User profile vectors are built not as a flat average of their history, but by applying an exponential decay weight favoring recently liked songs, ensuring recommendations adapt to evolving user tastes.
+3. **Diversity-Aware Selection:** Pure similarity ranking often creates "filter bubbles" or echo chambers. The `MLEngine` dedicates a percentage (e.g., 40%) of the final response to high-scoring but diverse candidates sampled via pseudorandom selection, enhancing discovery.
+4. **Strict Noise Thresholds:** A minimum cosine similarity threshold (e.g., `0.05`) is enforced. Candidates failing this threshold are discarded.
+5. **Popularity Fallback Mechanism:** If the ML engine returns zero recommendations (new user or isolated taste profile), the system seamlessly retrieves trending collaborative or categorical entities.
 ---
 
 ## 2. Unified Persistence Architecture
@@ -147,3 +148,16 @@ graph LR
 
 * **Artifact Optimization:** The pipeline utilizes the `!antenv/` exclusion pattern during artifact upload. This prevents the local virtual environment from being transmitted to Azure, allowing the platform's native Oryx build engine to handle dependency resolution efficiently.
 * **Secure Authentication:** The pipeline implements OpenID Connect (OIDC) via `azure/login@v2`. This protocol eliminates the need for long-lived static credentials, relying instead on short-lived tokens authenticated against the Azure Tenant ID and Subscription ID.
+* **Pre-Deployment Migrations:** Alembic database schema migrations are executed natively within the standalone deployment job immediately prior to Web App artifact handoff, guaranteeing schema-code consistency and preventing startup race conditions.
+
+---
+
+## 4. Metadata Enrichment Pipeline
+
+To guarantee a diverse and densely populated catalog for the recommendation vectors, TuneTrace abstracts dataset expansion into an autonomous lifecycle.
+
+### Daemon-based Local Enrichment
+Upon FastAPI application startup (`lifespan` context), a non-blocking background daemon thread is spawned. This thread queries the database for songs lacking enriched metadata, batches them (n=50), and executes network requests against the standard YouTube Data API (`part=snippet`). It extracts actual categorical genres from unstructured tag arrays and persists them safely via HTTP exponential backoff.
+
+### Global Trending Cron Aggregator
+Driven by GitHub Action schedules (`cron: '0 0 * * 0'`), a separate serverless routine queries the YouTube `mostPopular` video chart for music strictly. It handles pagination, enforces deduplication against the primary Supabase cluster, and injects hundreds of high-quality verified candidates globally, guaranteeing the collaborative filtering algorithms never suffer from structural cold starts.

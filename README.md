@@ -4,7 +4,7 @@
 
 A FastAPI microservice that provides music suggestions using the YouTube Data API v3. The service analyzes a user's liked songs and returns similar tracks. It includes robust fallback mechanisms to always return relevant results when possible.
 
--Production URL: https://song-suggest-microservice.onrender.com
+-Production URL: https://song-suggest-fasapi.azurewebsites.net
 
 
 ##  API Contract
@@ -274,7 +274,7 @@ graph TB
 curl (POST /suggestions)
 ```
 curl -X POST \
-  https://song-suggest-microservice.onrender.com/suggestions \
+  https://song-suggest-fasapi.azurewebsites.net/suggestions \
   -H "Content-Type: application/json" \
   -d '{
         "user_id": "demo-user",
@@ -284,12 +284,12 @@ curl -X POST \
 
 curl (GET /liked-songs)
 ```
-curl "https://song-suggest-microservice.onrender.com/liked-songs?user_id=demo-user"
+curl "https://song-suggest-fasapi.azurewebsites.net/liked-songs?user_id=demo-user"
 ```
 
 curl (GET /health)
 ```
-curl "https://song-suggest-microservice.onrender.com/health"
+curl "https://song-suggest-fasapi.azurewebsites.net/health"
 ```
 
 ---
@@ -361,7 +361,7 @@ alembic upgrade head
 **Example (fetch)**:
 ```javascript
 async function getSuggestions(userId, songs, genre = null) {
-  const res = await fetch("https://song-suggest-microservice.onrender.com/suggestions", {
+  const res = await fetch("https://song-suggest-fasapi.azurewebsites.net/suggestions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ 
@@ -377,7 +377,7 @@ async function getSuggestions(userId, songs, genre = null) {
 
 async function getLikedSongs(userId) {
   const res = await fetch(
-    `https://song-suggest-microservice.onrender.com/liked-songs?user_id=${encodeURIComponent(userId)}`
+    `https://song-suggest-fasapi.azurewebsites.net/liked-songs?user_id=${encodeURIComponent(userId)}`
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
@@ -397,9 +397,9 @@ Environment variables (Render -> Environment)
 - REDIS_URL: Optional. Render internal Redis URL (free tier supported).
 - REDIS_TTL_SECONDS: Optional. Default `3600`.
 
-Start command (Render)
-```
-uvicorn main:app --host 0.0.0.0 --port $PORT
+Start command (Azure/Local)
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 Dependencies
@@ -416,7 +416,7 @@ CORS
 
 ##  Health Check
 ```
-GET https://song-suggest-microservice.onrender.com/health (for internal testing of FastAPI instance)
+GET https://song-suggest-fasapi.azurewebsites.net/health (for internal testing of FastAPI instance)
 Response: { "status": "healthy" }
 ```
 ##Metrics
