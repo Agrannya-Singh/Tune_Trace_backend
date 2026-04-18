@@ -125,6 +125,13 @@ class SongMetadata(Base):
     tags: Mapped[Optional[str]] = mapped_column(
         Text, nullable=True, comment="Comma-separated tags from YouTube."
     )
+    enriched: Mapped[Optional[str]] = mapped_column(
+        String(16),
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Enrichment version. NULL=raw, 'V2'=genre/tags enriched, etc.",
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
@@ -138,6 +145,7 @@ class SongMetadata(Base):
             "artist": self.artist,
             "genre": self.genre,
             "tags": self.tags,
+            "enriched": self.enriched,
         }
 
 

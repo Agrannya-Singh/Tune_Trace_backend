@@ -5,6 +5,7 @@ import logging
 import os
 import json
 from contextlib import asynccontextmanager
+import threading
 from typing import List, Set, Optional
 
 # --- Third-Party Imports ---
@@ -23,6 +24,7 @@ from repository import MusicRepository
 from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion, LikedSongResponse
 from dependencies import get_repo, get_suggestion_service
 from utils.metrics import track_latency
+from utils.enrichment import run_enrichment
 
 # ==============================================================================
 # --- Initial Application Setup ---
@@ -72,6 +74,16 @@ async def lifespan(application: FastAPI):
         logger.critical(f"FATAL: Could not connect to the database: {e}")
         raise RuntimeError(f"Database connection failed: {e}") from e
     logger.info("Application startup complete.")
+
+    # --- Launch enrichment in a background thread (non-blocking) ---
+    enrichment_thread = threading.Thread(
+        target=run_enrichment,
+        kwargs={"api_key": YOUTUBE_API_KEY},
+        daemon=True,
+        name="song-enrichment",
+    )
+    enrichment_thread.start()
+    logger.info("Enrichment background thread started.")
 
     yield  # --- Application runs here ---
 
