@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
     # Allows manual triggering from the GitHub Actions UI
 
+permissions:
+  contents: read
+
 jobs:
   seed_trending_music:
     runs-on: ubuntu-latest
