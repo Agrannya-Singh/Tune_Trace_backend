@@ -94,21 +94,38 @@ class MusicRepository:
         )
 
     def get_candidate_songs(self, exclude_song_ids: Optional[Set[int]] = None, limit: int = 1000) -> List[SongMetadata]:
-        """Returns a list of candidate songs for recommendation.
+        """Returns candidate songs ordered by metadata richness for best TF-IDF quality.
 
-        Args:
-            exclude_song_ids: Set of SongMetadata IDs to exclude (e.g. user's liked songs).
-            limit: Maximum number of candidates to return.
+        Priority:
+          1. Songs with both genre AND tags populated  (richest vectors)
+          2. Songs with genre only
+          3. Remaining songs (title/artist only)
+        Within each tier, most-recently-updated songs appear first.
         """
         query = self.db.query(SongMetadata)
         if exclude_song_ids:
             query = query.filter(~SongMetadata.id.in_(exclude_song_ids))
         return (
             query
-            .order_by(SongMetadata.updated_at.desc())
+            .order_by(
+                # Richest metadata first: both genre and tags present
+                (
+                    (SongMetadata.genre.isnot(None)) &
+                    (SongMetadata.genre != "") &
+                    (SongMetadata.tags.isnot(None)) &
+                    (SongMetadata.tags != "")
+                ).desc(),
+                # Second tier: genre present
+                (
+                    (SongMetadata.genre.isnot(None)) &
+                    (SongMetadata.genre != "")
+                ).desc(),
+                SongMetadata.updated_at.desc(),
+            )
             .limit(limit)
             .all()
         )
+
 
     def get_collaborative_suggestions(self, user: User, limit: int = 10) -> List[SongMetadata]:
         """Get song suggestions based on collaborative filtering.

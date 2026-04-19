@@ -53,7 +53,7 @@ class MLEngine:
         parts = [
             title,                                    # 1× weight
             " ".join([artist] * 2) if artist else "",  # 2× weight
-            " ".join([genre] * 3) if genre else "",    # 3× weight
+            " ".join([genre] * 2) if genre else "",    # 2× weight (was 3×; reduced to broaden genre diversity)
             tags,                                      # 1× weight
         ]
         return " ".join(p for p in parts if p)
@@ -67,6 +67,7 @@ class MLEngine:
         user_history: List[Dict],
         all_songs: List[Dict],
         top_n: int = 10,
+        excluded_video_ids: set | None = None,
     ) -> List[Dict]:
         """Generate content-based recommendations.
 
@@ -74,11 +75,18 @@ class MLEngine:
         1. Build TF-IDF feature text for user history & candidates.
         2. Compute a recency-decay-weighted user-profile vector.
         3. Score every candidate via cosine similarity.
-        4. Filter below ``min_score`` and already-liked songs.
+        4. Filter below ``min_score``, already-liked, and already-recommended songs.
         5. Select results with diversity injection.
+
+        Args:
+            excluded_video_ids: Set of video_ids that were already recommended in
+                previous requests.  These are skipped before scoring so the user
+                never sees the same suggestion twice across calls.
         """
         if not user_history or not all_songs:
             return []
+
+        _excluded = (excluded_video_ids or set()) 
 
         user_texts = [self._build_feature_text(s) for s in user_history]
         candidate_texts = [self._build_feature_text(s) for s in all_songs]
@@ -120,6 +128,9 @@ class MLEngine:
                 continue
             candidate = all_songs[idx]
             if candidate["video_id"] in user_video_ids:
+                continue
+            # Skip previously recommended songs to prevent repetition across calls
+            if candidate["video_id"] in _excluded:
                 continue
             scored.append((idx, float(score), candidate))
 

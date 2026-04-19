@@ -123,5 +123,21 @@ class TestRecommend(unittest.TestCase):
         self.assertLessEqual(len(recs), 10)
 
 
+    def test_excludes_previously_recommended(self):
+        """Songs in excluded_video_ids must not appear in recommendations."""
+        user_history = [
+            {"title": "Pop Song", "artist": "A", "genre": "Pop", "tags": "upbeat", "video_id": "v1"}
+        ]
+        all_songs = [
+            {"title": "Pop Song 2", "artist": "A", "genre": "Pop", "tags": "upbeat", "video_id": "v2"},
+            {"title": "Pop Song 3", "artist": "A", "genre": "Pop", "tags": "upbeat", "video_id": "v3"},
+        ]
+        engine = MLEngine(min_score=0.0, diversity_ratio=0.0)
+        recs = engine.recommend(user_history, all_songs, top_n=10, excluded_video_ids={"v2"})
+        rec_ids = {r["video_id"] for r in recs}
+        self.assertNotIn("v2", rec_ids)
+        self.assertIn("v3", rec_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

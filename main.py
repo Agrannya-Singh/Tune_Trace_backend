@@ -4,6 +4,7 @@
 import logging
 import os
 import json
+import random
 from contextlib import asynccontextmanager
 import threading
 from typing import List, Set, Optional
@@ -221,11 +222,31 @@ async def post_suggestions(
             candidate_songs = repo.get_candidate_songs(exclude_song_ids=user_liked_ids, limit=1000)
 
         # 4. Run the ML engine to get content-based suggestions
+        #    — shuffle candidates first to break deterministic ordering
+        #    — pass previously recommended video IDs so they are never repeated
+        random.shuffle(candidate_songs)
+
+        # Fetch previously recommended video IDs from Redis (last 24h)
+        previously_recommended: set = set()
+        if redis_client:
+            try:
+                rec_key = f"prev_recs:{user.user_id}"
+                cached_recs = redis_client.get(rec_key)
+                if cached_recs:
+                    previously_recommended = set(json.loads(cached_recs))
+                    logger.info(
+                        "Excluding %d previously recommended songs for user %s.",
+                        len(previously_recommended), user.user_id,
+                    )
+            except Exception as e:
+                logger.warning("Failed to read prev_recs from Redis: %s", e)
+
         with track_latency("MLEngine:Recommend"):
             ai_suggestions = ml_engine.recommend(
                 user_history=[s.to_dict() for s in user_likes],
                 all_songs=[s.to_dict() for s in candidate_songs],
-                top_n=10
+                top_n=10,
+                excluded_video_ids=previously_recommended,
             )
 
         # 5. Fallback to genre/trending YouTube search if TF-IDF ML engine yields no results.
@@ -248,6 +269,26 @@ async def post_suggestions(
             )
             for s in ai_suggestions
         ]
+
+        # Store the recommended video IDs in Redis so future calls exclude them
+        if redis_client and ai_suggestions:
+            try:
+                new_rec_ids = [
+                    s.get('video_id') or s.get('youtube_video_id')
+                    for s in ai_suggestions
+                    if s.get('video_id') or s.get('youtube_video_id')
+                ]
+                rec_key = f"prev_recs:{user.user_id}"
+                # Merge with existing set so exclusions accumulate
+                merged = list(previously_recommended | set(new_rec_ids))
+                redis_client.set(rec_key, json.dumps(merged), ex=60 * 60 * 24)  # 24h TTL
+                logger.info(
+                    "Stored %d prev_recs for user %s (total exclusions: %d).",
+                    len(new_rec_ids), user.user_id, len(merged),
+                )
+            except Exception as e:
+                logger.warning("Failed to write prev_recs to Redis: %s", e)
+
         return {"suggestions": response_suggestions}
 
     except Exception as e:
