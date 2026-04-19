@@ -19,7 +19,7 @@ graph TD
         
         B --> F[Weighted String Construction]
         C -->|Weight: 2x| F
-        D -->|Weight: 3x| F
+        D -->|Weight: 2x| F
         E --> F
         
         F --> G[Feature Document]
@@ -45,11 +45,13 @@ graph TD
 
 The implemented pipeline demonstrates several key technical advantages over naive content-based systems:
 
-1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (3x) tokens during feature string construction using space-separated replication, ensuring proper TF-IDF vectorization counting without creating merged nonsense tokens.
-2. **Exponential Recency Decay:** User profile vectors are built not as a flat average of their history, but by applying an exponential decay weight favoring recently liked songs, ensuring recommendations adapt to evolving user tastes.
-3. **Diversity-Aware Selection:** Pure similarity ranking often creates "filter bubbles" or echo chambers. The `MLEngine` dedicates a percentage (e.g., 40%) of the final response to high-scoring but diverse candidates sampled via pseudorandom selection, enhancing discovery.
-4. **Strict Noise Thresholds:** A minimum cosine similarity threshold (e.g., `0.05`) is enforced. Candidates failing this threshold are discarded.
-5. **Popularity Fallback Mechanism:** If the ML engine returns zero recommendations (new user or isolated taste profile), the system seamlessly retrieves trending collaborative or categorical entities.
+1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (2x) tokens during feature string construction using space-separated replication, ensuring proper TF-IDF vectorization counting without creating merged nonsense tokens or over-clustering a single genre.
+2. **Metadata-Richness Ordering:** Candidate pools are explicitly sorted by semantic completeness (Genre & Tags > Genre Only > None) before inference, guaranteeing the engine analyzes the highest-fidelity data first.
+3. **Exponential Recency Decay:** User profile vectors are built not as a flat average of their history, but by applying an exponential decay weight favoring recently liked songs, ensuring recommendations adapt to evolving user tastes.
+4. **Anti-Repetition Tracking:** Inference pools are pre-shuffled to break deterministic sorting, and all served recommendations are tracked per-user in an ephemeral Redis cache (24h TTL). Subsequent requests filter these IDs out, enforcing absolute catalog rotation so users never see repeated suggestions.
+5. **Diversity-Aware Selection:** Pure similarity ranking often creates "filter bubbles" or echo chambers. The `MLEngine` dedicates a percentage (e.g., 40%) of the final response to high-scoring but diverse candidates sampled via pseudorandom selection, enhancing discovery.
+6. **Strict Noise Thresholds:** A minimum cosine similarity threshold (e.g., `0.05`) is enforced. Candidates failing this threshold are discarded.
+7. **Decoupled Fallback Mechanism:** Collaborative filtering has been placed behind a feature flag (disabled at low user counts due to data sparsity). If the ML engine returns zero recommendations, the system seamlessly falls back directly to high-fidelity global trending or categorical YouTube searches.
 ---
 
 ## 2. Unified Persistence Architecture
@@ -160,4 +162,4 @@ To guarantee a diverse and densely populated catalog for the recommendation vect
 Upon FastAPI application startup (`lifespan` context), a non-blocking background daemon thread is spawned. This thread queries the database for songs lacking enriched metadata, batches them (n=50), and executes network requests against the standard YouTube Data API (`part=snippet`). It extracts actual categorical genres from unstructured tag arrays and persists them safely via HTTP exponential backoff.
 
 ### Global Trending Cron Aggregator
-Driven by GitHub Action schedules (`cron: '0 0 * * 0'`), a separate serverless routine queries the YouTube `mostPopular` video chart for music strictly. It handles pagination, enforces deduplication against the primary Supabase cluster, and injects hundreds of high-quality verified candidates globally, guaranteeing the collaborative filtering algorithms never suffer from structural cold starts.
+Driven by GitHub Action schedules (`cron: '0 0 * * 0'`), a separate serverless routine queries the YouTube `mostPopular` video chart for music strictly. It handles pagination, enforces deduplication against the primary Supabase cluster, and injects hundreds of high-quality verified candidates globally, guaranteeing the fallback algorithms never suffer from structural cold starts.
