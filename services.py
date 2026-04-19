@@ -117,16 +117,42 @@ class SuggestionService:
             return []
 
     def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
-        collaborative_raw = repo.get_collaborative_suggestions(
-            user, limit=num_suggestions)
+        """Return fallback suggestions when the TF-IDF ML engine yields no results.
 
-        if not collaborative_raw:
+        Collaborative filtering is intentionally disabled (COLLABORATIVE_FILTERING_ENABLED=False)
+        while the user base is small — it requires significant user overlap to produce
+        meaningful results and would mostly return empty lists at low user counts.
+        The fallback goes directly to genre/trending YouTube search instead.
+
+        To re-enable collaborative filtering in the future (e.g. once user count is large
+        enough for meaningful overlap), set COLLABORATIVE_FILTERING_ENABLED = True below.
+        """
+        # ----------------------------------------------------------------
+        # Feature flag — flip to True when user base is large enough
+        # (collaborative filtering needs >=2 users who liked >=2 same songs)
+        # ----------------------------------------------------------------
+        COLLABORATIVE_FILTERING_ENABLED = False
+
+        if COLLABORATIVE_FILTERING_ENABLED:
+            collaborative_raw = repo.get_collaborative_suggestions(
+                user, limit=num_suggestions)
+            if collaborative_raw:
+                logger.info(
+                    "Collaborative filtering returned %d suggestions for user %s.",
+                    len(collaborative_raw), user.user_id,
+                )
+                return [
+                    {"title": song.title, "artist": song.artist, "video_id": song.video_id}
+                    for song in collaborative_raw
+                ]
             logger.warning(
-                f"No personalized suggestions for user {user.user_id}. Triggering fallback.")
-            return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)
+                "Collaborative filtering returned no results for user %s. "
+                "Falling through to genre/trending fallback.", user.user_id,
+            )
 
-        return [
-            {"title": song.title, "artist": song.artist,
-                "video_id": song.video_id}
-            for song in collaborative_raw
-        ]
+        # Primary fallback: genre-based or global trending YouTube search
+        logger.info(
+            "Using genre/trending YouTube fallback for user %s (genre=%s).",
+            user.user_id, genre or "Global Hits",
+        )
+        return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)

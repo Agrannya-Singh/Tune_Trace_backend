@@ -228,10 +228,13 @@ async def post_suggestions(
                 top_n=10
             )
 
-        # 5. Fallback to collaborative/genre-based suggestions if ML fails
+        # 5. Fallback to genre/trending YouTube search if TF-IDF ML engine yields no results.
+        #    Collaborative filtering is disabled (low user count); see services.py for the flag.
         if not ai_suggestions:
             logger.warning(
-                f"ML engine returned no suggestions for user {user.user_id}. Using fallback.")
+                "ML engine returned no suggestions for user %s. Using genre/trending fallback.",
+                user.user_id,
+            )
             ai_suggestions = suggestion_service.get_suggestions(
                 user, repo, genre=request.genre)
 
