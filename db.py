@@ -20,6 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -132,12 +133,22 @@ class SongMetadata(Base):
         index=True,
         comment="Enrichment version. NULL=raw, 'V2'=genre/tags enriched, etc.",
     )
+    embedding = mapped_column(
+        Vector(384),
+        nullable=True,
+        comment="384-d semantic embedding from all-MiniLM-L6-v2"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     def to_dict(self) -> dict:
         """Converts the SQLAlchemy model to a dictionary for the ML engine."""
+        # Convert embedding to list if it's a numpy array or vector type, else pass as is
+        emb = self.embedding
+        if hasattr(emb, "tolist"):
+            emb = emb.tolist()
+            
         return {
             "id": self.id,
             "video_id": self.video_id,
@@ -146,6 +157,7 @@ class SongMetadata(Base):
             "genre": self.genre,
             "tags": self.tags,
             "enriched": self.enriched,
+            "embedding": emb,
         }
 
 
