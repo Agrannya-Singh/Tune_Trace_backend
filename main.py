@@ -242,15 +242,18 @@ async def post_suggestions(
             except Exception as e:
                 logger.warning("Failed to read prev_recs from Redis: %s", e)
 
-        # Use the existing repository DB session for the pgvector query
-        db_session = repo.db
-        with track_latency("MLEngine:SemanticSearch"):
-            ai_suggestions = ml_engine.recommend(
-                user_history=[s.to_dict() for s in user_likes],
-                db_session=db_session,
-                top_n=10,
-                excluded_video_ids=previously_recommended,
-            )
+        # Get a fresh DB session for the pgvector query
+        db_session = next(get_session())
+        try:
+            with track_latency("MLEngine:SemanticSearch"):
+                ai_suggestions = ml_engine.recommend(
+                    user_history=[s.to_dict() for s in user_likes],
+                    db_session=db_session,
+                    top_n=10,
+                    excluded_video_ids=previously_recommended,
+                )
+        finally:
+            db_session.close()
 
         # 5. Fallback to genre/trending YouTube search if semantic engine yields no results.
         #    Collaborative filtering is disabled (low user count); see services.py for the flag.
@@ -362,7 +365,7 @@ async def health_check():
 
 
 @app.post("/discover", response_model=DiscoverResponse, tags=["Discovery"])
-async def discover_music(request: DiscoverRequest, db_session: Session = Depends(get_session)):
+async def discover_music(request: DiscoverRequest):
     """Semantic discovery — search by mood, song name, or free-text description.
 
     The user's text input is encoded into a 384-d dense vector by
@@ -374,15 +377,19 @@ async def discover_music(request: DiscoverRequest, db_session: Session = Depends
         - `"Blinding Lights by The Weeknd"`
         - `"upbeat 90s hip-hop party anthems"`
     """
-    with track_latency("MLEngine:Discover"):
-        results = ml_engine.search_by_text(
-            query=request.query,
-            db_session=db_session,
-            top_n=request.limit,
-        )
+    db_session = next(get_session())
+    try:
+        with track_latency("MLEngine:Discover"):
+            results = ml_engine.search_by_text(
+                query=request.query,
+                db_session=db_session,
+                top_n=request.limit,
+            )
+    finally:
+        db_session.close()
 
     if not results:
-        logger.info("Discover returned 0 results for query of length: %d", len(request.query))
+        logger.info("Discover returned 0 results for query: %s", request.query[:80])
 
     return DiscoverResponse(
         query=request.query,
