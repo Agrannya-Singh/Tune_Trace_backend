@@ -160,5 +160,76 @@ class TestRecommend(unittest.TestCase):
         self.assertIsInstance(recs[0]["score"], float)
 
 
+class TestSearchByText(unittest.TestCase):
+    """Tests for the search_by_text() free-text discovery method."""
+
+    def test_empty_query_returns_empty(self):
+        engine = MLEngine()
+        mock_session = MagicMock()
+        results = engine.search_by_text("", mock_session)
+        self.assertEqual(results, [])
+
+    def test_whitespace_only_returns_empty(self):
+        engine = MLEngine()
+        mock_session = MagicMock()
+        results = engine.search_by_text("   ", mock_session)
+        self.assertEqual(results, [])
+
+    @patch("ml_engine.SentenceTransformer")
+    def test_returns_scored_results(self, MockST):
+        """Valid query should return dicts with video_id, title, artist, score."""
+        import numpy as np
+
+        mock_model_instance = MockST.return_value
+        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
+
+        engine = MLEngine()
+        engine._model = mock_model_instance
+
+        mock_row = MagicMock()
+        mock_row.video_id = "v1"
+        mock_row.title = "Chill Vibes"
+        mock_row.artist = "LoFi Artist"
+        mock_row.genre = "Lo-Fi"
+        mock_row.tags = "chill, study"
+        mock_row.enriched = "V3"
+        mock_row.similarity = 0.87
+
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [mock_row]
+        mock_session.execute.return_value = mock_result
+
+        results = engine.search_by_text("chill study music", mock_session, top_n=5)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["video_id"], "v1")
+        self.assertIn("score", results[0])
+        self.assertIsInstance(results[0]["score"], float)
+
+    @patch("ml_engine.SentenceTransformer")
+    def test_respects_top_n(self, MockST):
+        """Limit parameter should be passed to the SQL query."""
+        import numpy as np
+
+        mock_model_instance = MockST.return_value
+        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
+
+        engine = MLEngine()
+        engine._model = mock_model_instance
+
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_session.execute.return_value = mock_result
+
+        results = engine.search_by_text("upbeat party", mock_session, top_n=3)
+        self.assertEqual(results, [])
+
+        # Verify the SQL was called with k=3
+        call_args = mock_session.execute.call_args
+        self.assertEqual(call_args[0][1]["k"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
