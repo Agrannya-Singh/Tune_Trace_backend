@@ -67,11 +67,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install alembic sqlalchemy psycopg2-binary pgvector python-dotenv
 
-      - name: Run Database Migrations
-        env:
-          POSTGRES_DATABASE_URL: ${{ secrets.POSTGRES_DATABASE_URL }}
-        run: |
-          alembic upgrade head
+      #- name: Run Database Migrations TO_DO : Fix alembic script
+      #  env:
+      #    POSTGRES_DATABASE_URL: ${{ secrets.POSTGRES_DATABASE_URL }}
+      #  run: |
+      #    alembic upgrade head
       
       - name: Login to Azure
         uses: azure/login@v2
