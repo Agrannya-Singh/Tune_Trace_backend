@@ -1,4 +1,4 @@
-name: Deploy TuneTrace Backend to Azure
+name: Build and deploy TuneTrace Backend to Azure
 
 on:
   push:
@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout code
@@ -18,7 +21,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies locally (for validation)
+      # Validates dependencies locally to catch syntax errors in requirements.txt
+      - name: Install dependencies locally (Validation)
         run: |
           pip install -r requirements.txt
 
@@ -29,10 +33,10 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_614CA175BDB04D7DB7A9C5C4A9543192 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_D43E42F06B844B6B9D8BBE1F39EA3069 }}
 
-      - name: Deploy to Azure Web App
+      - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'song-suggest-fastapi'
           package: .
-          # These help trigger proper build
+          # This is the "Magic Flag" that forces Oryx to generate the manifest
           enable-builtin-build: true
