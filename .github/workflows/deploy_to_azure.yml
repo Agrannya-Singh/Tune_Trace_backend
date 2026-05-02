@@ -1,42 +1,42 @@
-name: Build and deploy TuneTrace Backend to Azure
+name: Deploy TuneTrace Backend to Azure ACR
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  id-token: write  # Essential for OIDC login
+  contents: read
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      # Validates dependencies locally to catch syntax errors in requirements.txt
-      - name: Install dependencies locally (Validation)
-        run: |
-          pip install -r requirements.txt
-
-      - name: Login to Azure
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_4AED1299D2C04CAA9208F16E2D318BEA }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_614CA175BDB04D7DB7A9C5C4A9543192 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_D43E42F06B844B6B9D8BBE1F39EA3069 }}
 
-      - name: 'Deploy to Azure Web App'
+      # 1. Log in to the SongSouggest Registry
+      - name: Login to ACR
+        run: az acr login --name SongSouggest
+
+      # 2. Build the Docker Image
+      # This step uses your Dockerfile to bake in requirements and model weights.
+      - name: Build and Push Image
+        run: |
+          docker build -t songsouggest.azurecr.io/backend:${{ github.sha }} .
+          docker push songsouggest.azurecr.io/backend:${{ github.sha }}
+
+      # 3. Update the Web App to pull the new container
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'song-suggest-fastapi'
-          package: .
-          # This is the "Magic Flag" that forces Oryx to generate the manifest
-          enable-builtin-build: true
+          images: 'songsouggest.azurecr.io/backend:${{ github.sha }}'
