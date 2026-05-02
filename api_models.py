@@ -29,3 +29,32 @@ class LikedSongResponse(BaseModel):
     title: str
     artist: str
     created_at: str
+
+
+class DiscoverSong(BaseModel):
+    title: str
+    artist: str
+    youtube_video_id: str
+    genre: Optional[str] = None
+    score: float = Field(..., description="Semantic similarity score (0-1).")
+
+
+class DiscoverRequest(BaseModel):
+    query: str = Field(
+        ...,
+        min_length=2,
+        max_length=500,
+        description="Free-text search query — a mood, song name, description, or vibe.",
+        json_schema_extra={"example": "chill lo-fi vibes for studying"},
+    )
+    limit: int = Field(
+        10,
+        ge=1,
+        le=30,
+        description="Number of results to return (max 30).",
+    )
+
+
+class DiscoverResponse(BaseModel):
+    query: str
+    results: List[DiscoverSong]

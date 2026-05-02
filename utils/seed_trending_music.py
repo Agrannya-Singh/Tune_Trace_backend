@@ -18,6 +18,8 @@ import time
 import random
 from typing import List, Dict, Optional
 
+from sentence_transformers import SentenceTransformer
+
 import requests
 from sqlalchemy.orm import Session
 
@@ -35,7 +37,8 @@ logger = logging.getLogger("seed_trending")
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_SONGS = 1000
-ENRICHMENT_VERSION = "V2"
+ENRICHMENT_VERSION = "V3"
+MODEL_NAME = "all-MiniLM-L6-v2"
 
 SEARCH_QUERIES = [
     "top pop songs official video",
@@ -125,6 +128,21 @@ def _fetch_video_details(api_key: str, video_ids: List[str]) -> List[Dict]:
     return []
 
 
+def _build_text_context(title: str, artist: str, genre: str, tags_str: str) -> str:
+    """Build semantic text context for embedding generation.
+
+    Mirrors ml_engine.MLEngine.build_text_context format.
+    """
+    parts = [title]
+    if artist:
+        parts.append(f"Artist: {artist}")
+    if genre:
+        parts.append(f"Genre: {genre}")
+    if tags_str:
+        parts.append(f"Tags: {tags_str}")
+    return ". ".join(parts)
+
+
 def run_seeder(api_key: Optional[str] = None):
     if api_key is None:
         api_key = os.getenv("YOUTUBE_API_KEY")
@@ -132,6 +150,11 @@ def run_seeder(api_key: Optional[str] = None):
     if not api_key:
         logger.error("Enrichment skipped: YOUTUBE_API_KEY not configured.")
         return
+
+    # Load SentenceTransformer model once for the entire run
+    logger.info("Loading SentenceTransformer model '%s'...", MODEL_NAME)
+    model = SentenceTransformer(MODEL_NAME)
+    logger.info("Model loaded.")
 
     db = SessionLocal()
     
@@ -192,6 +215,10 @@ def run_seeder(api_key: Optional[str] = None):
                             tags=tags_str,
                             enriched=ENRICHMENT_VERSION
                         )
+                        # Store text context for batch vectorization
+                        new_song._text_context = _build_text_context(
+                            title, artist, genre, tags_str
+                        )
                         new_songs_to_insert.append(new_song)
                         existing_ids.add(video_id)
                         items_added += 1
@@ -204,10 +231,40 @@ def run_seeder(api_key: Optional[str] = None):
                     break
                     
         if new_songs_to_insert:
+            # --- Batch vectorize all new songs at once ---
+            logger.info(
+                "Vectorizing %d new songs with SentenceTransformer...",
+                len(new_songs_to_insert),
+            )
+            text_contexts = [s._text_context for s in new_songs_to_insert]
+            embeddings = model.encode(
+                text_contexts,
+                normalize_embeddings=True,
+                show_progress_bar=True,
+                batch_size=64,
+            )
+
+            # Attach embeddings to ORM objects before bulk save
+            # We need to use raw SQL since SQLAlchemy doesn't know about vector type
             logger.info(f"Saving {len(new_songs_to_insert)} new trending songs to database...")
             db.bulk_save_objects(new_songs_to_insert)
+            db.flush()  # flush to get IDs assigned
+
+            # Now update embeddings via raw SQL
+            from sqlalchemy import text as sa_text
+            for song, embedding in zip(new_songs_to_insert, embeddings):
+                vector_literal = (
+                    "[" + ",".join(str(float(x)) for x in embedding) + "]"
+                )
+                db.execute(
+                    sa_text(
+                        "UPDATE song_metadata SET embedding = :vec WHERE video_id = :vid"
+                    ),
+                    {"vec": vector_literal, "vid": song.video_id},
+                )
+
             db.commit()
-            logger.info("Database commit successful.")
+            logger.info("Database commit successful (with V3 embeddings).")
         else:
             logger.info("No new tagged songs found to add.")
 

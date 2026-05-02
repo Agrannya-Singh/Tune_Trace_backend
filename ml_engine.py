@@ -1,149 +1,215 @@
 # ml_engine.py
 """
-Content-based recommendation engine using TF-IDF vectorization with:
-- Correct token-level weighting (artist 2x, genre 3x)
-- Recency-decay weighted user profile
-- Minimum similarity threshold to filter noise
+Semantic recommendation engine using SentenceTransformer (all-MiniLM-L6-v2)
+dense vector embeddings with pgvector cosine distance retrieval.
+
+Replaces the legacy TF-IDF engine with:
+- 384-d dense vector encoding via SentenceTransformer
+- Direct pgvector `<=>` cosine distance search on Supabase
+- Recency-decay weighted user profile vector
 - Diversity-aware selection to avoid echo chambers
 """
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Defaults — can be overridden via constructor
 # ---------------------------------------------------------------------------
-DEFAULT_MIN_SCORE = 0.05
 DEFAULT_DIVERSITY_RATIO = 0.4  # 40% of final results from diverse sampling
+MODEL_NAME = "all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
 
 
 class MLEngine:
     def __init__(
         self,
-        min_score: float = DEFAULT_MIN_SCORE,
         diversity_ratio: float = DEFAULT_DIVERSITY_RATIO,
     ):
-        self.min_score = min_score
         self.diversity_ratio = diversity_ratio
+        self._model: Optional[SentenceTransformer] = None
+
+    # ------------------------------------------------------------------
+    # Model Lifecycle
+    # ------------------------------------------------------------------
+
+    def load_model(self) -> None:
+        """Pre-load the SentenceTransformer model into RAM.
+
+        Called during FastAPI lifespan startup to avoid cold-start latency
+        on the first request (~90 MB constant footprint).
+        """
+        if self._model is None:
+            logger.info("Loading SentenceTransformer model '%s'...", MODEL_NAME)
+            self._model = SentenceTransformer(MODEL_NAME)
+            logger.info("Model loaded successfully (%d-d vectors).", EMBEDDING_DIM)
+
+    @property
+    def model(self) -> SentenceTransformer:
+        if self._model is None:
+            self.load_model()
+        return self._model
 
     # ------------------------------------------------------------------
     # Feature Engineering
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_feature_text(song: Dict) -> str:
-        """Build a weighted text-feature string for a single song.
+    def build_text_context(song: Dict) -> str:
+        """Build a natural-language text context for semantic encoding.
 
-        Weighting is achieved by *repeating space-separated tokens*, NOT
-        by repeating the raw string.  ``"Drake" * 2`` would produce the
-        single nonsense token ``"DrakeDrake"``; instead we produce
-        ``"Drake Drake"`` so TF-IDF counts two genuine occurrences.
+        Format: "{title}. Artist: {artist}. Genre: {genre}. Tags: {tags}"
+        This structure gives the transformer model clear semantic cues
+        about each metadata field's role.
         """
         title = song.get("title") or ""
         artist = song.get("artist") or ""
         genre = song.get("genre") or ""
         tags = song.get("tags") or ""
 
-        parts = [
-            title,                                    # 1× weight
-            " ".join([artist] * 2) if artist else "",  # 2× weight
-            " ".join([genre] * 2) if genre else "",    # 2× weight (was 3×; reduced to broaden genre diversity)
-            tags,                                      # 1× weight
-        ]
-        return " ".join(p for p in parts if p)
+        parts = [title]
+        if artist:
+            parts.append(f"Artist: {artist}")
+        if genre:
+            parts.append(f"Genre: {genre}")
+        if tags:
+            parts.append(f"Tags: {tags}")
+        return ". ".join(parts)
+
+    def encode(self, texts: List[str]) -> np.ndarray:
+        """Encode a list of text strings into 384-d float32 vectors.
+
+        Returns:
+            np.ndarray of shape (len(texts), 384).
+        """
+        return self.model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+
+    def encode_single(self, text: str) -> np.ndarray:
+        """Encode a single text string. Returns shape (384,)."""
+        return self.encode([text])[0]
 
     # ------------------------------------------------------------------
-    # Recommendation
+    # Recommendation via pgvector
     # ------------------------------------------------------------------
 
     def recommend(
         self,
         user_history: List[Dict],
-        all_songs: List[Dict],
+        db_session: Session,
         top_n: int = 10,
-        excluded_video_ids: set | None = None,
+        excluded_video_ids: Optional[Set[str]] = None,
     ) -> List[Dict]:
-        """Generate content-based recommendations.
+        """Generate content-based recommendations using pgvector cosine search.
 
         Pipeline:
-        1. Build TF-IDF feature text for user history & candidates.
+        1. Encode user liked songs into text contexts → 384-d vectors.
         2. Compute a recency-decay-weighted user-profile vector.
-        3. Score every candidate via cosine similarity.
-        4. Filter below ``min_score``, already-liked, and already-recommended songs.
+        3. Query pgvector for nearest neighbours via `<=>` cosine distance.
+        4. Filter already-liked and previously-recommended songs.
         5. Select results with diversity injection.
 
         Args:
-            excluded_video_ids: Set of video_ids that were already recommended in
-                previous requests.  These are skipped before scoring so the user
-                never sees the same suggestion twice across calls.
+            user_history: List of song dicts from user's liked history
+                          (ordered newest-first).
+            db_session:   Active SQLAlchemy session for pgvector queries.
+            top_n:        Number of recommendations to return.
+            excluded_video_ids: Video IDs to skip (previously recommended).
+
+        Returns:
+            List of song dicts with 'score' field (higher = more similar).
         """
-        if not user_history or not all_songs:
+        if not user_history:
             return []
 
-        _excluded = (excluded_video_ids or set()) 
+        _excluded = excluded_video_ids or set()
 
-        user_texts = [self._build_feature_text(s) for s in user_history]
-        candidate_texts = [self._build_feature_text(s) for s in all_songs]
+        # --- Build user profile vector with recency decay ----------------
+        user_texts = [self.build_text_context(s) for s in user_history]
+        user_vectors = self.encode(user_texts)  # (N, 384)
 
-        # --- Vectorize (new instance per call → thread-safe) -----------
-        vectorizer = TfidfVectorizer(stop_words="english")
-        try:
-            tfidf = vectorizer.fit_transform(user_texts + candidate_texts)
-        except ValueError:
-            # Happens when vocabulary is empty (all stop words, etc.)
-            logger.warning("TF-IDF vectorization produced an empty vocabulary.")
-            return []
-
-        user_matrix = tfidf[: len(user_history)]
-        candidate_matrix = tfidf[len(user_history) :]
-
-        # --- Recency-decay weighted user profile ----------------------
-        #   Most recent like → weight ≈ 1.0
-        #   Oldest like       → weight ≈ 0.37  (e^-1)
-        #   Assumes user_history is ordered newest-first.
-        n = user_matrix.shape[0]
+        n = len(user_vectors)
         if n > 1:
+            # Most recent like → weight ≈ 1.0, oldest → weight ≈ 0.37 (e^-1)
             decay = np.exp(-np.linspace(0, 1, n))
             weights = (decay / decay.sum()).reshape(-1, 1)
-            user_profile = np.asarray(user_matrix.T @ weights).T  # (1, V)
+            profile_vector = (user_vectors * weights).sum(axis=0)
         else:
-            user_profile = np.asarray(user_matrix.todense())
+            profile_vector = user_vectors[0]
 
-        # --- Score candidates -----------------------------------------
-        scores = cosine_similarity(user_profile, candidate_matrix)[0]
+        # Normalize the profile vector for cosine distance
+        norm = np.linalg.norm(profile_vector)
+        if norm > 0:
+            profile_vector = profile_vector / norm
 
-        # --- Filter ---------------------------------------------------
+        # --- Query pgvector for nearest neighbours -----------------------
+        # Fetch more candidates than needed to allow filtering + diversity
+        fetch_limit = top_n * 5
+
+        # Build the exclusion list: user's own liked video IDs + prev recs
         user_video_ids = {s["video_id"] for s in user_history}
-        scored = []
-        for idx, score in enumerate(scores):
-            if score < self.min_score:
-                continue
-            if idx >= len(all_songs):
-                continue
-            candidate = all_songs[idx]
-            if candidate["video_id"] in user_video_ids:
-                continue
-            # Skip previously recommended songs to prevent repetition across calls
-            if candidate["video_id"] in _excluded:
-                continue
-            scored.append((idx, float(score), candidate))
+        all_excluded = user_video_ids | _excluded
 
-        if not scored:
-            logger.info(
-                "No candidates passed the similarity threshold (%.3f).",
-                self.min_score,
-            )
+        # Convert profile vector to PostgreSQL array literal
+        vector_literal = "[" + ",".join(str(float(x)) for x in profile_vector) + "]"
+
+        # Build SQL with optional exclusion filter
+        if all_excluded:
+            placeholders = ", ".join(f":exc_{i}" for i in range(len(all_excluded)))
+            sql = text(f"""
+                SELECT video_id, title, artist, genre, tags, enriched,
+                       1 - (embedding <=> :query_vec) AS similarity
+                FROM song_metadata
+                WHERE embedding IS NOT NULL
+                  AND video_id NOT IN ({placeholders})
+                ORDER BY embedding <=> :query_vec
+                LIMIT :k
+            """)
+            params = {"query_vec": vector_literal, "k": fetch_limit}
+            for i, vid in enumerate(all_excluded):
+                params[f"exc_{i}"] = vid
+        else:
+            sql = text("""
+                SELECT video_id, title, artist, genre, tags, enriched,
+                       1 - (embedding <=> :query_vec) AS similarity
+                FROM song_metadata
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> :query_vec
+                LIMIT :k
+            """)
+            params = {"query_vec": vector_literal, "k": fetch_limit}
+
+        try:
+            result = db_session.execute(sql, params)
+            rows = result.fetchall()
+        except Exception as e:
+            logger.error("pgvector query failed: %s", e)
             return []
 
-        # --- Diversity-aware selection --------------------------------
-        scored.sort(key=lambda x: x[1], reverse=True)
+        if not rows:
+            logger.info("No vectorized candidates found in the database.")
+            return []
 
+        scored = [
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artist": row.artist,
+                "genre": row.genre,
+                "tags": row.tags,
+                "enriched": row.enriched,
+                "score": round(float(row.similarity), 4),
+            }
+            for row in rows
+        ]
+
+        # --- Diversity-aware selection --------------------------------
         n_top = max(1, int(top_n * (1 - self.diversity_ratio)))
         n_diverse = top_n - n_top
 
@@ -162,14 +228,91 @@ class MLEngine:
         final = top_picks + diverse_picks
 
         logger.info(
-            "MLEngine: %d top + %d diverse = %d results (from %d scored candidates).",
+            "MLEngine: %d top + %d diverse = %d results (from %d pgvector candidates).",
             len(top_picks),
             len(diverse_picks),
             len(final),
             len(scored),
         )
 
-        return [
-            {**candidate, "score": round(score, 4)}
-            for _, score, candidate in final
+        return final
+
+    # ------------------------------------------------------------------
+    # Free-Text Semantic Search (for /discover)
+    # ------------------------------------------------------------------
+
+    def search_by_text(
+        self,
+        query: str,
+        db_session: Session,
+        top_n: int = 10,
+    ) -> List[Dict]:
+        """Encode a free-text query and return the closest songs via pgvector.
+
+        Use cases:
+        - Mood search:  "chill lo-fi vibes for studying"
+        - Song lookup:  "Blinding Lights by The Weeknd"
+        - Genre browse: "upbeat 90s hip-hop"
+
+        Args:
+            query:      Raw user input string (mood / song name / description).
+            db_session:  Active SQLAlchemy session for pgvector queries.
+            top_n:       Number of results to return.
+
+        Returns:
+            List of song dicts sorted by semantic similarity (descending).
+        """
+        if not query or not query.strip():
+            return []
+
+        query_vector = self.encode_single(query.strip())
+
+        # Normalize (encode already normalizes, but belt-and-suspenders)
+        norm = np.linalg.norm(query_vector)
+        if norm > 0:
+            query_vector = query_vector / norm
+
+        vector_literal = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
+
+        sql = text("""
+            SELECT video_id, title, artist, genre, tags, enriched,
+                   1 - (embedding <=> :query_vec) AS similarity
+            FROM song_metadata
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> :query_vec
+            LIMIT :k
+        """)
+
+        try:
+            result = db_session.execute(
+                sql, {"query_vec": vector_literal, "k": top_n}
+            )
+            rows = result.fetchall()
+        except Exception as e:
+            logger.error("pgvector search_by_text query failed: %s", e)
+            return []
+
+        if not rows:
+            logger.info("search_by_text: no vectorized candidates found.")
+            return []
+
+        results = [
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artist": row.artist,
+                "genre": row.genre,
+                "tags": row.tags,
+                "score": round(float(row.similarity), 4),
+            }
+            for row in rows
         ]
+
+        logger.info(
+            "search_by_text: query=%r → %d results (top score=%.4f).",
+            query[:50],
+            len(results),
+            results[0]["score"] if results else 0.0,
+        )
+
+        return results

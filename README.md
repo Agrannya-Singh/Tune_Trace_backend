@@ -1,18 +1,45 @@
 
 
-## Enhanced Music Suggestion API
+## TuneTrace - Semantic Music Recommendation API
 
-A FastAPI microservice that provides music suggestions using the YouTube Data API v3. The service analyzes a user's liked songs and returns similar tracks. It includes robust fallback mechanisms to always return relevant results when possible.
+A FastAPI microservice that provides AI-powered music recommendations using **semantic vector search** (`all-MiniLM-L6-v2` + `pgvector`). The engine encodes song metadata into 384-dimensional dense vectors and retrieves the most semantically similar tracks via cosine distance on Supabase/PostgreSQL.
 
--Production URL: https://song-suggest-fasapi.azurewebsites.net
+**Production URL**: https://song-suggest-fasapi.azurewebsites.net
 
+---
 
-##  API Contract
+## Architecture (V3 - Semantic)
+
+```
+                         ┌──────────────────────────────┐
+                         │   SentenceTransformer Model   │
+                         │    all-MiniLM-L6-v2 (384-d)  │
+                         └────────────┬─────────────────┘
+                                      │ encode()
+            ┌─────────────────────────┼─────────────────────────┐
+            ▼                         ▼                         ▼
+   POST /suggestions           POST /discover           seed_trending_music.py
+   (User History →             (Free Text →              (Trending Songs →
+    Profile Vector)             Query Vector)              Store Embeddings)
+            │                         │                         │
+            └─────────────┬───────────┘                         │
+                          ▼                                     ▼
+                  ┌──────────────────┐                 ┌──────────────┐
+                  │  pgvector <=>    │                 │  Supabase DB │
+                  │  Cosine Distance │◄────────────────│  (HNSW Index)│
+                  └───────┬──────────┘                 └──────────────┘
+                          ▼
+                   Top-N Results
+```
+
+---
+
+## API Contract
 
 ### Endpoints
 
 #### 1. POST /suggestions
-**Description**: Get AI-powered song suggestions based on user's liked songs using collaborative filtering.
+**Description**: Get AI-powered song suggestions based on a user's liked songs using **semantic vector search**.
 
 **Request Body** (JSON):
 ```json
@@ -25,7 +52,7 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 
 **Fields**:
 - `user_id` (required): User email or OAuth identifier (max 255 chars)
-- `songs` (required): Array of song titles, 1-50 items
+- `songs` (required): Array of song titles, 1–50 items
 - `genre` (optional): Genre for fallback suggestions (max 128 chars)
 
 **Response** (200 OK):
@@ -41,14 +68,58 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 }
 ```
 
-**Errors**: 
-- 400 (invalid input - exceeds limits)
+**Errors**:
+- 400 (invalid input — exceeds limits)
 - 500 (internal server error)
 - 503 (YouTube API unavailable)
 
 ---
 
-#### 2. GET /liked-songs
+#### 2. POST /discover
+**Description**: Semantic discovery - search by mood, song name, or free-text description. No user history or authentication required.
+
+**Request Body** (JSON):
+```json
+{
+  "query": "chill lo-fi vibes for late night studying",
+  "limit": 10
+}
+```
+
+**Fields**:
+- `query` (required): Free-text search query - a mood, song name, or vibe (2-500 chars)
+- `limit` (optional): Number of results to return, 1–30 (default: 10)
+
+**Response** (200 OK):
+```json
+{
+  "query": "chill lo-fi vibes for late night studying",
+  "results": [
+    {
+      "title": "Lofi Girl - Study Session",
+      "artist": "Lofi Girl",
+      "youtube_video_id": "jfKfPfyJRdk",
+      "genre": "Lo-Fi",
+      "score": 0.8742
+    },
+    {
+      "title": "Nujabes - Feather",
+      "artist": "Nujabes",
+      "youtube_video_id": "M-BWXT3UBns",
+      "genre": "Jazz Hip-Hop",
+      "score": 0.8234
+    }
+  ]
+}
+```
+
+**Errors**:
+- 422 (validation error - query too short/long)
+- 500 (internal server error)
+
+---
+
+#### 3. GET /liked-songs
 **Description**: Returns the list of songs a user has previously liked.
 
 **Query Parameters**:
@@ -68,12 +139,12 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 ]
 ```
 
-**Errors**: 
+**Errors**:
 - 500 (failed to retrieve liked songs)
 
 ---
 
-#### 3. GET /health
+#### 4. GET /health
 **Description**: Health check endpoint to confirm service is running.
 
 **Response** (200 OK):
@@ -85,232 +156,49 @@ A FastAPI microservice that provides music suggestions using the YouTube Data AP
 
 ---
 
-##  Recommendation Algorithm (Version 2.0)
+## Recommendation Algorithm (Version 3.0 - Semantic)
 
-**Goal**: Provide high-quality, personalized song recommendations using collaborative filtering with YouTube Data API.
+**Goal**: Provide high-quality, personalized song recommendations using dense vector semantic search.
 
-### Hybrid Recommendation Approach
+### Pipeline
 
-#### Primary: Collaborative Filtering
-1. **User Identification**: Store user preferences by email/OAuth ID
-2. **Song Resolution**: Search YouTube for each liked song → Store metadata in database
-3. **Find Similar Users**: Query users who liked ≥2 same songs as current user
-4. **Generate Recommendations**: Return songs liked by similar users but not by current user
-5. **Ranking**: Sort by popularity among similar users (most liked first)
+| Step | Description |
+|:---|:---|
+| 1. **Encoding** | Each song's title, artist, genre, and tags are formatted into a natural-language text context and encoded into a 384-d vector by `all-MiniLM-L6-v2`. |
+| 2. **Profile Vector** | A recency-decay-weighted average of the user's liked song vectors produces a single profile vector. Recent likes carry more weight via exponential decay (`e^(-t)`). |
+| 3. **pgvector Retrieval** | The profile vector is queried against the HNSW-indexed `embedding` column using `<=>` cosine distance, returning the top candidates in O(log N) time. |
+| 4. **Exclusion** | Previously liked and previously recommended songs (tracked in Redis, 24h TTL) are excluded at the SQL level. |
+| 5. **Diversity** | 60% strict similarity + 40% random sampling from remaining candidates prevents filter bubbles. |
+| 6. **Fallback** | If zero vectorized candidates are found, the system falls back to genre-based YouTube trending search. |
 
-#### Secondary: Content-Based Fallback
-- **Trigger**: No collaborative data available (new user or insufficient overlap)
-- **Method**: Search YouTube for popular songs by specified genre
-- **Default**: Global top hits if no genre specified
-- **Limit**: Returns up to 10 suggestions
+### Discovery Mode (`/discover`)
+
+| Step | Description |
+|:---|:---|
+| 1. **Encoding** | Raw user text (mood / song name / description) is directly encoded into a 384-d query vector. |
+| 2. **Retrieval** | pgvector cosine distance search against the full catalog. |
+| 3. **Scoring** | Results include a `score` field (0–1) indicating semantic similarity. |
 
 ### Performance Optimizations
 
 **Caching Strategy**:
-- **LRU Cache**: 512-entry cache for YouTube search results (in-memory)
 - **Redis Cache**: User preferences with configurable TTL (default: 1 hour)
+- **Model Weight Cache**: SentenceTransformer loaded once at startup (~90 MB RAM, ~3s cold start)
+- **HuggingFace CI Cache**: GitHub Actions caches `~/.cache/huggingface/` to skip 80 MB re-downloads
 - **Background Tasks**: Redis updates happen asynchronously (non-blocking)
-- **Database Indexing**: Optimized queries on user_id, song_id, video_id
+- **HNSW Index**: pgvector HNSW index enables sub-millisecond nearest-neighbour lookups
 
 **Latency Targets**:
-- Database queries: <200ms (with Redis)
-- YouTube API calls: 5-8s timeout with error handling
-- Overall response: 40% faster with caching
-
-### Input Validation & Security
-
-**Request Limits** (to prevent DoS):
-- Max 50 songs per request
-- Max 255 chars for user_id
-- Max 128 chars for genre
-- Max 200 chars per song query
-
-**Input Sanitization**:
-- Alphanumeric + spaces, hyphens, apostrophes only
-- Minimum 2-character queries
-- Empty/invalid queries skipped with warnings
-
-**Error Handling**:
-- YouTube API timeouts handled gracefully
-- Sanitized error messages (no sensitive data leakage)
-- Comprehensive logging for debugging
-- 
-Client Layer: External applications that consume the API
-API Gateway: FastAPI with CORS middleware for cross-origin support
-REST Endpoints: Three main endpoints for liked songs, suggestions, and health checks
-Business Logic: Core functions handling song persistence, suggestion generation, and fallback mechanisms
-Caching Strategy: Dual-layer caching with in-memory LRU cache and database-backed cache
-ML Processing: TF-IDF vectorization and cosine similarity for intelligent song recommendations
-Data Access Layer: SQLAlchemy ORM with multiple models for users, songs, and recommendations
-External Integration: YouTube Data API v3 for fetching video metadata and suggestions
-Storage: SQLite database for persistent storage
-The architecture follows a clean separation of concerns with proper layering, caching for performance, and a fallback mechanism to ensure reliability.
-
-
-<!-- This is an auto-generated reply by CodeRabbit -->
-
-
-```mermaid
-%%{init: {"theme":"light"}%%
-graph TB
-  subgraph CLIENT[" CLIENT LAYER"]
-    Client["Client Applications\nWeb • Mobile • Desktop"]
-  end
-
-  subgraph GATEWAY[" API GATEWAY"]
-    CORS["CORS Middleware\nCross-Origin Resource Sharing"]
-    FastAPI["FastAPI Server\nAsync • Fast • Modern"]
-  end
-
-  subgraph ENDPOINTS["🔌 REST ENDPOINTS"]
-    GET_LIKED["GET /liked-songs\nRetrieve User Favorites"]
-    POST_SUGGEST["POST /suggestions\nAI-Powered Recommendations"]
-    GET_HEALTH["GET /health\nService Status Check"]
-  end
-
-  subgraph CORE["CORE LOGIC"]
-    AUTH["Request Validator\nPydantic Models"]
-    COMBINE["Suggestion Engine\ncombine_suggestions()"]
-    YT_SUGGEST["YouTube Integration\nget_youtube_suggestions()"]
-    FALLBACK["Fallback System\nget_popular_song_fallback()"]
-    PERSIST["Like Persistence\n_persist_user_likes()"]
-    LOAD["Like Retrieval\n_load_user_likes()"]
-  end
-
-  subgraph CACHE[" CACHING SYSTEM"]
-    MEM_CACHE["Memory Cache\nLRU Cache\nTTL: 3600s"]
-    DB_CACHE["Database Cache\nQueryCache Table"]
-  end
-
-  subgraph ML[" ML PIPELINE"]
-    TFIDF["TF-IDF Vectorizer\nText Feature Extraction"]
-    COSINE["Cosine Similarity\nContent Matching"]
-    SCORING["Scoring Algorithm\nHeuristic + ML Fusion"]
-  end
-
-  subgraph DATA[" DATA LAYER"]
-    SESSION["SQLAlchemy ORM\nSession Management"]
-    subgraph MODELS["Database Models"]
-      USER_MODEL["User"]
-      LIKED_MODEL["UserLikedSong"]
-      SONG_MODEL["Song"]
-      REC_MODEL["Recommendation"]
-      VIDEO_MODEL["VideoFeature"]
-      CACHE_MODEL["QueryCache"]
-    end
-  end
-
-  subgraph EXTERNAL[" EXTERNAL APIS"]
-    YOUTUBE["YouTube Data API v3\nSearch • Videos • Related"]
-  end
-
-  subgraph STORAGE[" STORAGE"]
-    SQLITE["SQLite Database\nmusic_recommender.db"]
-  end
-
-  %% Request Flow
-  Client -->|HTTPS| CORS
-  CORS --> FastAPI
-  FastAPI --> GET_LIKED
-  FastAPI --> POST_SUGGEST
-  FastAPI --> GET_HEALTH
-
-  %% GET /liked-songs flow
-  GET_LIKED -.->|Validate| AUTH
-  AUTH -.-> LOAD
-  LOAD -.-> SESSION
-  SESSION -.-> USER_MODEL
-  SESSION -.-> LIKED_MODEL
-
-  %% POST /suggestions flow
-  POST_SUGGEST -->|Validate| AUTH
-  AUTH --> PERSIST
-  PERSIST --> SESSION
-  AUTH --> COMBINE
-  COMBINE -->|Cache Hit?| MEM_CACHE
-  COMBINE -->|Cache Miss| YT_SUGGEST
-  YT_SUGGEST -->|API Call| YOUTUBE
-  YOUTUBE -->|Video Data| TFIDF
-  TFIDF --> COSINE
-  COSINE --> SCORING
-  SCORING --> COMBINE
-  COMBINE -->|Fallback| FALLBACK
-  FALLBACK -->|API Call| YOUTUBE
-  COMBINE -->|Store| MEM_CACHE
-
-  %% Database connections
-  SESSION --> SQLITE
-  USER_MODEL -.-> SQLITE
-  LIKED_MODEL -.-> SQLITE
-  SONG_MODEL -.-> SQLITE
-  REC_MODEL -.-> SQLITE
-  VIDEO_MODEL -.-> SQLITE
-  CACHE_MODEL -.-> SQLITE
-  DB_CACHE -.-> CACHE_MODEL
-
-  %% Spotify-inspired styling
-  classDef spotifyGreen fill:#1DB954,stroke:#FFFFFF,stroke-width:2px,color:#000000
-  classDef spotifyBlack fill:#191414,stroke:#1DB954,stroke-width:2px,color:#FFFFFF
-  classDef spotifyGray fill:#212121,stroke:#1DB954,stroke-width:1px,color:#FFFFFF
-  classDef spotifyWhite fill:#FFFFFF,stroke:#1DB954,stroke-width:2px,color:#000000
-  classDef spotifyAccent fill:#1ED760,stroke:#FFFFFF,stroke-width:2px,color:#000000
-  classDef externalStyle fill:#535353,stroke:#1DB954,stroke-width:2px,color:#FFFFFF
-
-  class GET_LIKED,POST_SUGGEST,GET_HEALTH spotifyGreen
-  class Client,FastAPI spotifyAccent
-  class AUTH,COMBINE,YT_SUGGEST,FALLBACK,PERSIST,LOAD spotifyBlack
-  class MEM_CACHE,DB_CACHE,SESSION spotifyGray
-  class TFIDF,COSINE,SCORING spotifyWhite
-  class YOUTUBE externalStyle
-  class SQLITE spotifyGray
-  class USER_MODEL,LIKED_MODEL,SONG_MODEL,REC_MODEL,VIDEO_MODEL,CACHE_MODEL spotifyGray
-  class CORS spotifyBlack
-```
-
-
-
-##  Usage Examples
-
-curl (POST /suggestions)
-```
-curl -X POST \
-  https://song-suggest-fasapi.azurewebsites.net/suggestions \
-  -H "Content-Type: application/json" \
-  -d '{
-        "user_id": "demo-user",
-        "songs": ["Blinding Lights", "Shape of You"]
-      }'
-```
-
-curl (GET /liked-songs)
-```
-curl "https://song-suggest-fasapi.azurewebsites.net/liked-songs?user_id=demo-user"
-```
-
-curl (GET /health)
-```
-curl "https://song-suggest-fasapi.azurewebsites.net/health"
-```
+- Vector encoding: ~5–15ms per query
+- pgvector retrieval: <50ms
+- Full `/discover` round-trip: <100ms
+- Full `/suggestions` round-trip: <500ms (includes YouTube search for new songs)
 
 ---
 
-##  Database Schema
+## Database Schema
 
 ### Tables
-
-#### users
-```sql
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    user_id VARCHAR(255) UNIQUE NOT NULL,  -- OAuth email
-    name VARCHAR(255),                      -- Display name
-    email VARCHAR(255),                     -- Email address
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-CREATE INDEX idx_users_user_id ON users(user_id);
-CREATE INDEX idx_users_email ON users(email);
-```
 
 #### song_metadata
 ```sql
@@ -321,10 +209,26 @@ CREATE TABLE song_metadata (
     artist VARCHAR(256) NOT NULL,
     genre VARCHAR(128),
     tags TEXT,
+    enriched VARCHAR(16),             -- NULL=raw, 'V2'=genre-enriched, 'V3'=vectorized
+    embedding vector(384),            -- Dense vector from SentenceTransformer
     updated_at TIMESTAMP DEFAULT NOW()
 );
-CREATE INDEX idx_song_video_id ON song_metadata(video_id);
-CREATE INDEX idx_song_genre ON song_metadata(genre);
+
+-- HNSW index for fast cosine distance search
+CREATE INDEX idx_song_embedding_hnsw
+    ON song_metadata USING hnsw (embedding vector_cosine_ops);
+```
+
+#### users
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    email VARCHAR(255),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
 ```
 
 #### user_liked_songs
@@ -338,20 +242,19 @@ CREATE TABLE user_liked_songs (
 );
 ```
 
-### Migration
-
-To update existing databases, run:
+### Migration (V2 → V3)
 ```bash
-# Using Alembic
-alembic upgrade head
+# Enable pgvector extension (Supabase)
+# Already enabled via dashboard or:
+CREATE EXTENSION IF NOT EXISTS vector;
 
-# Or manually apply migration
-# See: alembic/versions/add_user_oauth_fields.py
+# Backfill existing songs with embeddings
+python v3_janitor.py
 ```
 
 ---
 
-##  Frontend Integration
+## Frontend Integration
 
 **OAuth User Flow**:
 1. Frontend authenticates user via Google OAuth (NextAuth.js)
@@ -360,21 +263,29 @@ alembic upgrade head
 
 **Example (fetch)**:
 ```javascript
+// Personalized recommendations (requires liked songs)
 async function getSuggestions(userId, songs, genre = null) {
   const res = await fetch("https://song-suggest-fasapi.azurewebsites.net/suggestions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      user_id: userId,  // user email from OAuth
-      songs: songs,     // max 50 songs
-      genre: genre      // optional
-    })
+    body: JSON.stringify({ user_id: userId, songs, genre })
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  return data.suggestions;
+  return (await res.json()).suggestions;
 }
 
+// Semantic discovery (no auth needed)
+async function discoverMusic(query, limit = 10) {
+  const res = await fetch("https://song-suggest-fasapi.azurewebsites.net/discover", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit })
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()).results;
+}
+
+// Liked songs
 async function getLikedSongs(userId) {
   const res = await fetch(
     `https://song-suggest-fasapi.azurewebsites.net/liked-songs?user_id=${encodeURIComponent(userId)}`
@@ -386,48 +297,72 @@ async function getLikedSongs(userId) {
 
 ---
 
-## ⚙️ Configuration
+## Usage Examples
 
-Environment variables (Render -> Environment)
-- YOUTUBE_API_KEY: Required.
-- SQLITE_DATABASE_URL: Optional. Defaults to `sqlite:///app.db`.
-- POSTGRES_DATABASE_URL: Optional. Render Postgres connection URL. If omitted but `DATABASE_URL` is set to a Postgres URL, it will be used.
-- DATABASE_URL: Backward-compatibility for Postgres.
-- DB_READ_PREFERENCE: `postgres` (default) or `sqlite`.
-- REDIS_URL: Optional. Render internal Redis URL (free tier supported).
-- REDIS_TTL_SECONDS: Optional. Default `3600`.
+**POST /suggestions** (personalized recommendations):
+```bash
+curl -X POST \
+  https://song-suggest-fasapi.azurewebsites.net/suggestions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_id": "demo-user",
+        "songs": ["Blinding Lights", "Shape of You"]
+      }'
+```
 
-Start command (Azure/Local)
+**POST /discover** (mood / free-text search):
+```bash
+curl -X POST \
+  https://song-suggest-fasapi.azurewebsites.net/discover \
+  -H "Content-Type: application/json" \
+  -d '{
+        "query": "sad acoustic songs for a rainy day",
+        "limit": 5
+      }'
+```
+
+**GET /liked-songs**:
+```bash
+curl "https://song-suggest-fasapi.azurewebsites.net/liked-songs?user_id=demo-user"
+```
+
+**GET /health**:
+```bash
+curl "https://song-suggest-fasapi.azurewebsites.net/health"
+```
+
+---
+
+## Configuration
+
+Environment variables:
+- `YOUTUBE_API_KEY`: Required.
+- `POSTGRES_DATABASE_URL`: Required for production (Supabase connection string).
+- `REDIS_URL`: Optional. Redis URL for caching (free tier supported).
+- `REDIS_TTL_SECONDS`: Optional. Default `3600`.
+
+Start command (Azure/Local):
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Dependencies
-- See `requirements.txt`. Includes SQLAlchemy and scikit‑learn for the ranking logic.
+Dependencies:
+- See `requirements.txt`. Includes `sentence-transformers`, `pgvector`, and `SQLAlchemy`.
 
-CORS
+CORS:
 - CORS is set to allow all origins by default for ease of integration. Restrict in production as needed.
 
 ---
 
-<img width="1306" height="180" alt="image" src="https://github.com/user-attachments/assets/ac4f89c4-e5ca-436f-954f-45b70bf77c6e" />
+## Health Check
+```
+GET https://song-suggest-fasapi.azurewebsites.net/health
+Response: { "status": "healthy" }
+```
 
 ---
 
-##  Health Check
-```
-GET https://song-suggest-fasapi.azurewebsites.net/health (for internal testing of FastAPI instance)
-Response: { "status": "healthy" }
-```
-##Metrics
-<img width="1496" height="767" alt="image" src="https://github.com/user-attachments/assets/4eb534d0-58a9-41d2-8f32-5e81319156ae" />
-mock.json as sent from terminal 
-
-<img width="1428" height="488" alt="image" src="https://github.com/user-attachments/assets/bde4f7ba-2229-43dd-ab3a-00e0a64016bc" />
-metrics as observed on the render logs.
-
-
-##  Testing (Bruno Collection)
+## Testing (Bruno Collection)
 
 For contributors and developers, this repository includes a **Bruno** collection for testing the API.
 
@@ -436,5 +371,6 @@ For contributors and developers, this repository includes a **Bruno** collection
 3.  **Select Environment**: Choose "Production" from the environment dropdown (top right).
 4.  **Run Requests**:
     *   **Health**: Check if API is running.
-    *   **Get Suggestions**: Trigger the ML recommendation engine.
+    *   **Get Suggestions**: Trigger the semantic recommendation engine.
+    *   **Discover Music**: Search by mood or song name.
     *   **Get Liked Songs**: Verify database/cache persistence.

@@ -15,8 +15,10 @@ redis
 python-dotenv
 requests
 
-# ML & Data Analysis
-scikit-learn
+# ML & Semantic Search
+sentence-transformers
 numpy
-pandas
 httpx
+
+# pgvector support (SQLAlchemy binding)
+pgvector

@@ -3,55 +3,54 @@
 
 ## 1. Machine Learning Methodology
 
-The TuneTrace recommendation engine employs a **Content-Based Filtering** architecture designed to address the "cold start" problem inherent in collaborative filtering systems. By analyzing the intrinsic attributes of audio entities rather than user behavioral clusters, the system generates personalized recommendations immediately upon a user's initial interaction.
+The TuneTrace recommendation engine employs a **Content-Based Filtering** architecture powered by **dense vector semantic search**. By encoding song metadata into 384-dimensional embeddings via `all-MiniLM-L6-v2` (SentenceTransformer) and leveraging `pgvector` cosine distance retrieval on Supabase/PostgreSQL, the system generates high-fidelity personalized recommendations without requiring user behavioral overlap.
 
-### Algorithmic Pipeline
-
-The recommendation logic is encapsulated within the `MLEngine` class, utilizing Scikit-Learn to process textual metadata into a vectorized feature space.
+### Algorithmic Pipeline (V3 — Semantic)
 
 ```mermaid
 graph TD
-    subgraph Feature_Engineering [Feature Engineering]
+    subgraph Feature_Engineering ["Feature Engineering"]
         A[Raw Song Data] -->|Extract| B(Title)
         A -->|Extract| C(Artist)
         A -->|Extract| D(Genre)
         A -->|Extract| E(Tags)
         
-        B --> F[Weighted String Construction]
-        C -->|Weight: 2x| F
-        D -->|Weight: 2x| F
+        B --> F["Natural Language Context Builder"]
+        C --> F
+        D --> F
         E --> F
         
-        F --> G[Feature Document]
+        F --> G["Text Context<br/>'Title. Artist: X. Genre: Y. Tags: Z'"]
     end
 
-    subgraph Vectorization [Vectorization Space]
-        G -->|TF-IDF Vectorizer| H[TF-IDF Matrix]
-        H --> I{Split Matrix}
-        I -->|Subset A| J[User History Matrix]
-        I -->|Subset B| K[Candidate Matrix]
+    subgraph Encoding ["Dense Vector Encoding"]
+        G -->|SentenceTransformer| H["384-d Embedding Vector"]
+        H --> I{Query Type}
+        I -->|"/suggestions"| J["Recency-Decay User Profile Vector"]
+        I -->|"/discover"| K["Direct Query Vector"]
     end
 
-    subgraph Similarity [Similarity Computation]
-        J -->|Mean Vector| L[User Profile Vector]
-        L & K -->|Cosine Similarity| M[Similarity Scores]
-        M --> N[Ranking & Filtering]
-        N --> O[Top 10 Recommendations]
+    subgraph Retrieval ["pgvector Cosine Retrieval"]
+        J --> L["pgvector <=> Cosine Distance"]
+        K --> L
+        L --> M["Ranked Candidate Pool"]
+        M --> N["Diversity-Aware Selection (60/40 split)"]
+        N --> O["Final Recommendations"]
     end
-
 ```
 
 ### Architectural Evaluation
 
-The implemented pipeline demonstrates several key technical advantages over naive content-based systems:
+The V3 semantic pipeline delivers several key advantages over the legacy TF-IDF approach:
 
-1. **Weighted Feature Engineering:** The algorithm explicitly weights the "Artist" (2x) and "Genre" (2x) tokens during feature string construction using space-separated replication, ensuring proper TF-IDF vectorization counting without creating merged nonsense tokens or over-clustering a single genre.
-2. **Metadata-Richness Ordering:** Candidate pools are explicitly sorted by semantic completeness (Genre & Tags > Genre Only > None) before inference, guaranteeing the engine analyzes the highest-fidelity data first.
-3. **Exponential Recency Decay:** User profile vectors are built not as a flat average of their history, but by applying an exponential decay weight favoring recently liked songs, ensuring recommendations adapt to evolving user tastes.
-4. **Anti-Repetition Tracking:** Inference pools are pre-shuffled to break deterministic sorting, and all served recommendations are tracked per-user in an ephemeral Redis cache (24h TTL). Subsequent requests filter these IDs out, enforcing absolute catalog rotation so users never see repeated suggestions.
-5. **Diversity-Aware Selection:** Pure similarity ranking often creates "filter bubbles" or echo chambers. The `MLEngine` dedicates a percentage (e.g., 40%) of the final response to high-scoring but diverse candidates sampled via pseudorandom selection, enhancing discovery.
-6. **Strict Noise Thresholds:** A minimum cosine similarity threshold (e.g., `0.05`) is enforced. Candidates failing this threshold are discarded.
-7. **Decoupled Fallback Mechanism:** Collaborative filtering has been placed behind a feature flag (disabled at low user counts due to data sparsity). If the ML engine returns zero recommendations, the system seamlessly falls back directly to high-fidelity global trending or categorical YouTube searches.
+1. **Dense Vector Encoding:** Song metadata is encoded into 384-dimensional dense vectors using `all-MiniLM-L6-v2`, capturing deep semantic relationships that sparse TF-IDF token matching inherently misses (e.g., "lo-fi chill beats" ↔ "relaxing ambient music").
+2. **pgvector Cosine Distance:** Recommendations are computed entirely within PostgreSQL via the `<=>` cosine distance operator on an HNSW-indexed `embedding` column, eliminating the need to fetch all candidates into application memory.
+3. **Recency-Decay User Profile:** User history vectors are weighted with exponential decay (`e^(-t)`), ensuring the profile adapts to evolving music tastes rather than averaging over stale preferences.
+4. **Diversity-Aware Selection:** 60% of results are selected by strict similarity ranking; 40% are sampled pseudo-randomly from remaining high-scoring candidates to prevent echo chambers.
+5. **Anti-Repetition Tracking:** Previously served recommendations are cached per-user in Redis (24h TTL) and excluded at the SQL level, guaranteeing catalog rotation.
+6. **Free-Text Discovery (`/discover`):** A standalone endpoint accepts any free-text input — moods ("chill vibes for studying"), song names ("Bohemian Rhapsody"), or genre descriptions ("upbeat 90s hip-hop") — encodes it into a vector, and returns the closest semantic matches. No user history or authentication required.
+7. **Decoupled Fallback:** If the semantic engine returns zero results (e.g., no vectorized songs yet), the system falls back to genre-based YouTube trending search.
+
 ---
 
 ## 2. Unified Persistence Architecture
@@ -63,6 +62,7 @@ sequenceDiagram
     participant FE as Next.js (Client)
     participant API as FastAPI (Azure)
     participant DB as PostgreSQL (AWS/Supabase)
+    participant PGV as pgvector (Embeddings)
     participant Cache as Redis (Render)
     participant BG as Background Tasks
 
@@ -81,12 +81,26 @@ sequenceDiagram
         API->>BG: Schedule update_redis_user_likes
     end
     
+    rect rgb(200, 220, 255)
+        Note right of API: Semantic Inference
+        API->>PGV: Encode user history → profile vector
+        PGV-->>API: Top-N candidates via <=> cosine distance
+    end
+
     API-->>FE: Return Suggestions (Immediate Response)
     deactivate API
 
     activate BG
     BG->>Cache: SET user_likes:{id} = [101, 102...] (TTL: 3600s)
     deactivate BG
+
+    Note over FE, API: Discovery Path (Mood / Song Search)
+    FE->>API: POST /discover (Free Text Query)
+    activate API
+    API->>PGV: Encode query → 384-d vector → cosine search
+    PGV-->>API: Top-N semantically similar songs
+    API-->>FE: JSON Results with Similarity Scores
+    deactivate API
 
     Note over FE, API: Read Path (Fetch Liked Songs)
     FE->>API: GET /liked-songs
@@ -104,14 +118,15 @@ sequenceDiagram
     
     API-->>FE: JSON Response
     deactivate API
-
 ```
 
 ### Infrastructure Components
 
 * **Presentation Layer:** Next.js application hosting the interactive UI.
 * **Logic Layer:** FastAPI microservice deployed on Azure App Service.
-* **Caching Layer:** Redis instance (hosted on Render) providing low-millisecond access to user history, configured with a 1-hour TTL (Time To Live).
+* **ML Layer:** `all-MiniLM-L6-v2` SentenceTransformer model (~90 MB), loaded once at startup.
+* **Vector Store:** PostgreSQL with `pgvector` extension (HNSW index, cosine distance).
+* **Caching Layer:** Redis instance (hosted on Render) providing low-millisecond access to user history, configured with a 1-hour TTL.
 * **Persistence Layer:** PostgreSQL database (hosted via Supabase/AWS) serving as the source of truth for user relations and song metadata.
 
 ---
@@ -126,24 +141,23 @@ graph LR
         A[Push to 'main'] --> B(Trigger Workflow)
     end
 
-    subgraph Build_Job [CI: Build Job on Ubuntu 22.04]
+    subgraph Build_Job ["CI: Build Job on Ubuntu 22.04"]
         B --> C[Checkout Code]
         C --> D[Setup Python 3.11]
         D --> E[Install Dependencies]
         E --> F["Upload Artifact<br/>(Excludes venv: !antenv)"]
     end
 
-    subgraph Deploy_Job [CD: Deploy Job Azure]
+    subgraph Deploy_Job ["CD: Deploy Job Azure"]
         F --> G[Download Artifact]
         G --> H[Azure Login via OIDC]
         H --> I[Deploy to Web App]
     end
 
     subgraph Production [Environment]
-        I --> J[Azure Web App: 'song-suggest-fasapi']
+        I --> J["Azure Web App: 'song-suggest-fasapi'"]
         J --> K[Production Slot]
     end
-
 ```
 
 ### Configuration Specifications
@@ -151,6 +165,7 @@ graph LR
 * **Artifact Optimization:** The pipeline utilizes the `!antenv/` exclusion pattern during artifact upload. This prevents the local virtual environment from being transmitted to Azure, allowing the platform's native Oryx build engine to handle dependency resolution efficiently.
 * **Secure Authentication:** The pipeline implements OpenID Connect (OIDC) via `azure/login@v2`. This protocol eliminates the need for long-lived static credentials, relying instead on short-lived tokens authenticated against the Azure Tenant ID and Subscription ID.
 * **Pre-Deployment Migrations:** Alembic database schema migrations are executed natively within the standalone deployment job immediately prior to Web App artifact handoff, guaranteeing schema-code consistency and preventing startup race conditions.
+* **Model Weight Caching:** GitHub Actions caches `~/.cache/huggingface/` to avoid re-downloading the ~80 MB SentenceTransformer model on every CI run.
 
 ---
 
@@ -161,5 +176,8 @@ To guarantee a diverse and densely populated catalog for the recommendation vect
 ### Daemon-based Local Enrichment
 Upon FastAPI application startup (`lifespan` context), a non-blocking background daemon thread is spawned. This thread queries the database for songs lacking enriched metadata, batches them (n=50), and executes network requests against the standard YouTube Data API (`part=snippet`). It extracts actual categorical genres from unstructured tag arrays and persists them safely via HTTP exponential backoff.
 
+### V3 Backfill Daemon
+A standalone script (`v3_janitor.py`) batch-migrates existing V2 rows to V3 by encoding their metadata into 384-d vectors and writing them back to the `embedding` column. This process runs outside the FastAPI main thread to avoid GIL contention.
+
 ### Global Trending Cron Aggregator
-Driven by GitHub Action schedules (`cron: '0 0 * * 0'`), a separate serverless routine queries the YouTube `mostPopular` video chart for music strictly. It handles pagination, enforces deduplication against the primary Supabase cluster, and injects hundreds of high-quality verified candidates globally, guaranteeing the fallback algorithms never suffer from structural cold starts.
+Driven by GitHub Action schedules (`cron: '0 0 * * 0'`), a separate serverless routine queries the YouTube `mostPopular` video chart for music strictly. It handles pagination, enforces deduplication against the primary Supabase cluster, generates V3 embeddings during ingestion, and injects hundreds of high-quality verified candidates globally, guaranteeing the fallback algorithms never suffer from structural cold starts.
