@@ -21,7 +21,10 @@ from db import SessionLocal, get_session
 from ml_engine import MLEngine
 from services import SuggestionService
 from repository import MusicRepository
-from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion, LikedSongResponse
+from api_models import (
+    SuggestionResponse, LikedSongsRequest, SongSuggestion, LikedSongResponse,
+    DiscoverRequest, DiscoverResponse, DiscoverSong,
+)
 from dependencies import get_repo, get_suggestion_service
 from utils.metrics import track_latency
 from utils.enrichment import run_enrichment
@@ -358,3 +361,45 @@ async def get_liked_songs(
 async def health_check():
     """A simple endpoint to confirm the service is running."""
     return {"status": "healthy"}
+
+
+@app.post("/discover", response_model=DiscoverResponse, tags=["Discovery"])
+async def discover_music(request: DiscoverRequest):
+    """Semantic discovery — search by mood, song name, or free-text description.
+
+    The user's text input is encoded into a 384-d dense vector by
+    SentenceTransformer and matched against the vectorized catalog using
+    pgvector cosine distance. No user history or auth required.
+
+    Examples:
+        - `"chill lo-fi vibes for studying"`
+        - `"Blinding Lights by The Weeknd"`
+        - `"upbeat 90s hip-hop party anthems"`
+    """
+    db_session = next(get_session())
+    try:
+        with track_latency("MLEngine:Discover"):
+            results = ml_engine.search_by_text(
+                query=request.query,
+                db_session=db_session,
+                top_n=request.limit,
+            )
+    finally:
+        db_session.close()
+
+    if not results:
+        logger.info("Discover returned 0 results for query: %s", request.query[:80])
+
+    return DiscoverResponse(
+        query=request.query,
+        results=[
+            DiscoverSong(
+                title=s["title"],
+                artist=s["artist"],
+                youtube_video_id=s["video_id"],
+                genre=s.get("genre"),
+                score=s["score"],
+            )
+            for s in results
+        ],
+    )

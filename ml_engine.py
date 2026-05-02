@@ -236,3 +236,83 @@ class MLEngine:
         )
 
         return final
+
+    # ------------------------------------------------------------------
+    # Free-Text Semantic Search (for /discover)
+    # ------------------------------------------------------------------
+
+    def search_by_text(
+        self,
+        query: str,
+        db_session: Session,
+        top_n: int = 10,
+    ) -> List[Dict]:
+        """Encode a free-text query and return the closest songs via pgvector.
+
+        Use cases:
+        - Mood search:  "chill lo-fi vibes for studying"
+        - Song lookup:  "Blinding Lights by The Weeknd"
+        - Genre browse: "upbeat 90s hip-hop"
+
+        Args:
+            query:      Raw user input string (mood / song name / description).
+            db_session:  Active SQLAlchemy session for pgvector queries.
+            top_n:       Number of results to return.
+
+        Returns:
+            List of song dicts sorted by semantic similarity (descending).
+        """
+        if not query or not query.strip():
+            return []
+
+        query_vector = self.encode_single(query.strip())
+
+        # Normalize (encode already normalizes, but belt-and-suspenders)
+        norm = np.linalg.norm(query_vector)
+        if norm > 0:
+            query_vector = query_vector / norm
+
+        vector_literal = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
+
+        sql = text("""
+            SELECT video_id, title, artist, genre, tags, enriched,
+                   1 - (embedding <=> :query_vec) AS similarity
+            FROM song_metadata
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> :query_vec
+            LIMIT :k
+        """)
+
+        try:
+            result = db_session.execute(
+                sql, {"query_vec": vector_literal, "k": top_n}
+            )
+            rows = result.fetchall()
+        except Exception as e:
+            logger.error("pgvector search_by_text query failed: %s", e)
+            return []
+
+        if not rows:
+            logger.info("search_by_text: no vectorized candidates found.")
+            return []
+
+        results = [
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artist": row.artist,
+                "genre": row.genre,
+                "tags": row.tags,
+                "score": round(float(row.similarity), 4),
+            }
+            for row in rows
+        ]
+
+        logger.info(
+            "search_by_text: query=%r → %d results (top score=%.4f).",
+            query[:50],
+            len(results),
+            results[0]["score"] if results else 0.0,
+        )
+
+        return results
