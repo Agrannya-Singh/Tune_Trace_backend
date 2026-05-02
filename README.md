@@ -4,7 +4,9 @@
 
 A FastAPI microservice that provides AI-powered music recommendations using **semantic vector search** (`all-MiniLM-L6-v2` + `pgvector`). The engine encodes song metadata into 384-dimensional dense vectors and retrieves the most semantically similar tracks via cosine distance on Supabase/PostgreSQL.
 
-**Production URL**: https://song-suggest-fasapi.azurewebsites.net
+**Production URL**: https://song-suggest-fastapi-ajaqgfa8aja8crbn.southeastasia-01.azurewebsites.net/
+
+docs: https://song-suggest-fastapi-ajaqgfa8aja8crbn.southeastasia-01.azurewebsites.net/docs#/Discovery/discover_music_discover_post
 
 ---
 
