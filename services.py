@@ -117,7 +117,7 @@ class SuggestionService:
             return []
 
     def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
-        """Return fallback suggestions when the TF-IDF ML engine yields no results.
+        """Return fallback suggestions when the semantic ML engine yields no results.
 
         Collaborative filtering is intentionally disabled (COLLABORATIVE_FILTERING_ENABLED=False)
         while the user base is small — it requires significant user overlap to produce

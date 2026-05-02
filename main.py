@@ -4,7 +4,6 @@
 import logging
 import os
 import json
-import random
 from contextlib import asynccontextmanager
 import threading
 from typing import List, Set, Optional
@@ -18,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 # --- Local Application Imports ---
-from db import SessionLocal
+from db import SessionLocal, get_session
 from ml_engine import MLEngine
 from services import SuggestionService
 from repository import MusicRepository
@@ -74,6 +73,9 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         logger.critical(f"FATAL: Could not connect to the database: {e}")
         raise RuntimeError(f"Database connection failed: {e}") from e
+
+    # --- Pre-load SentenceTransformer model into RAM (~90 MB) ---
+    ml_engine.load_model()
     logger.info("Application startup complete.")
 
     # --- Launch enrichment in a background thread (non-blocking) ---
@@ -101,9 +103,9 @@ async def lifespan(application: FastAPI):
 # ==============================================================================
 
 app = FastAPI(
-    title="Hybrid Music Suggestion API",
-    description="Generates music suggestions using a hybrid model with a genre-based fallback.",
-    version="2.3.0",
+    title="TuneTrace Semantic Music API",
+    description="Generates music suggestions using semantic vector search (pgvector) with genre-based fallback.",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -218,13 +220,8 @@ async def post_suggestions(
             update_redis_user_likes, user.user_id, user_liked_ids
         )
 
-        with track_latency("PostgreSQL:Fetch_Candidates"):
-            candidate_songs = repo.get_candidate_songs(exclude_song_ids=user_liked_ids, limit=1000)
-
-        # 4. Run the ML engine to get content-based suggestions
-        #    — shuffle candidates first to break deterministic ordering
+        # 4. Run the semantic ML engine (pgvector cosine search)
         #    — pass previously recommended video IDs so they are never repeated
-        random.shuffle(candidate_songs)
 
         # Fetch previously recommended video IDs from Redis (last 24h)
         previously_recommended: set = set()
@@ -241,19 +238,24 @@ async def post_suggestions(
             except Exception as e:
                 logger.warning("Failed to read prev_recs from Redis: %s", e)
 
-        with track_latency("MLEngine:Recommend"):
-            ai_suggestions = ml_engine.recommend(
-                user_history=[s.to_dict() for s in user_likes],
-                all_songs=[s.to_dict() for s in candidate_songs],
-                top_n=10,
-                excluded_video_ids=previously_recommended,
-            )
+        # Get a fresh DB session for the pgvector query
+        db_session = next(get_session())
+        try:
+            with track_latency("MLEngine:SemanticSearch"):
+                ai_suggestions = ml_engine.recommend(
+                    user_history=[s.to_dict() for s in user_likes],
+                    db_session=db_session,
+                    top_n=10,
+                    excluded_video_ids=previously_recommended,
+                )
+        finally:
+            db_session.close()
 
-        # 5. Fallback to genre/trending YouTube search if TF-IDF ML engine yields no results.
+        # 5. Fallback to genre/trending YouTube search if semantic engine yields no results.
         #    Collaborative filtering is disabled (low user count); see services.py for the flag.
         if not ai_suggestions:
             logger.warning(
-                "ML engine returned no suggestions for user %s. Using genre/trending fallback.",
+                "Semantic engine returned no suggestions for user %s. Using genre/trending fallback.",
                 user.user_id,
             )
             ai_suggestions = suggestion_service.get_suggestions(
