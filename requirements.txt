@@ -16,6 +16,8 @@ python-dotenv
 requests
 
 # ML & Semantic Search
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 sentence-transformers
 numpy
 httpx
