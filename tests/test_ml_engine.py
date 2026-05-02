@@ -117,11 +117,26 @@ class TestRecommend(unittest.TestCase):
             excluded_video_ids={"v2"},
         )
 
-        # Since v2 is excluded at the SQL level (via the generated query),
-        # the mock returns both rows, but in real scenario the DB would filter.
-        # This test validates the flow doesn't crash and returns results.
+        # Ensure 'v2' is indeed in the excluded_video_ids param passed to SQL
+        call_args = mock_session.execute.call_args
+        params = call_args[0][1]
+        self.assertIn("v2", params["excluded_ids"])
+
+        # Emulate DB filtering by only returning rows not in excluded_video_ids
+        filtered_rows = [r for r in [mock_row_1, mock_row_2] if r.video_id not in params["excluded_ids"]]
+        mock_result.fetchall.return_value = filtered_rows
+
+        # Re-run recommend to capture the filtered result
+        recs = engine.recommend(
+            user_history=user_history,
+            db_session=mock_session,
+            top_n=10,
+            excluded_video_ids={"v2"},
+        )
+
         self.assertIsInstance(recs, list)
-        self.assertGreater(len(recs), 0)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["video_id"], "v3")
 
     @patch("ml_engine.SentenceTransformer")
     def test_output_includes_score(self, MockST):

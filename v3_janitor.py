@@ -117,6 +117,7 @@ def run_backfill():
     except Exception as e:
         logger.exception("Backfill failed: %s", e)
         db.rollback()
+        raise
     finally:
         db.close()
 

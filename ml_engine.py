@@ -131,8 +131,27 @@ class MLEngine:
         _excluded = excluded_video_ids or set()
 
         # --- Build user profile vector with recency decay ----------------
-        user_texts = [self.build_text_context(s) for s in user_history]
-        user_vectors = self.encode(user_texts)  # (N, 384)
+        # Get embeddings from history, if not available, encode
+        user_vectors = []
+        texts_to_encode = []
+        indices_to_encode = []
+        
+        for i, s in enumerate(user_history):
+            emb = s.get("embedding")
+            if emb is not None:
+                user_vectors.append(np.array(emb, dtype=np.float32))
+            else:
+                user_vectors.append(None)
+                texts_to_encode.append(self.build_text_context(s))
+                indices_to_encode.append(i)
+                
+        # Encode missing vectors
+        if texts_to_encode:
+            encoded_vectors = self.encode(texts_to_encode)
+            for idx, vec in zip(indices_to_encode, encoded_vectors):
+                user_vectors[idx] = vec
+
+        user_vectors = np.array(user_vectors) # (N, 384)
 
         n = len(user_vectors)
         if n > 1:
@@ -190,7 +209,7 @@ class MLEngine:
             rows = result.fetchall()
         except Exception as e:
             logger.error("pgvector query failed: %s", e)
-            return []
+            raise e
 
         if not rows:
             logger.info("No vectorized candidates found in the database.")
@@ -290,7 +309,7 @@ class MLEngine:
             rows = result.fetchall()
         except Exception as e:
             logger.error("pgvector search_by_text query failed: %s", e)
-            return []
+            raise e
 
         if not rows:
             logger.info("search_by_text: no vectorized candidates found.")
@@ -309,8 +328,8 @@ class MLEngine:
         ]
 
         logger.info(
-            "search_by_text: query=%r → %d results (top score=%.4f).",
-            query[:50],
+            "search_by_text: query length=%d → %d results (top score=%.4f).",
+            len(query),
             len(results),
             results[0]["score"] if results else 0.0,
         )

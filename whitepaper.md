@@ -5,7 +5,7 @@
 
 The TuneTrace recommendation engine employs a **Content-Based Filtering** architecture powered by **dense vector semantic search**. By encoding song metadata into 384-dimensional embeddings via `all-MiniLM-L6-v2` (SentenceTransformer) and leveraging `pgvector` cosine distance retrieval on Supabase/PostgreSQL, the system generates high-fidelity personalized recommendations without requiring user behavioral overlap.
 
-### Algorithmic Pipeline (V3 — Semantic)
+### Algorithmic Pipeline (V3 - Semantic)
 
 ```mermaid
 graph TD
@@ -48,7 +48,7 @@ The V3 semantic pipeline delivers several key advantages over the legacy TF-IDF 
 3. **Recency-Decay User Profile:** User history vectors are weighted with exponential decay (`e^(-t)`), ensuring the profile adapts to evolving music tastes rather than averaging over stale preferences.
 4. **Diversity-Aware Selection:** 60% of results are selected by strict similarity ranking; 40% are sampled pseudo-randomly from remaining high-scoring candidates to prevent echo chambers.
 5. **Anti-Repetition Tracking:** Previously served recommendations are cached per-user in Redis (24h TTL) and excluded at the SQL level, guaranteeing catalog rotation.
-6. **Free-Text Discovery (`/discover`):** A standalone endpoint accepts any free-text input — moods ("chill vibes for studying"), song names ("Bohemian Rhapsody"), or genre descriptions ("upbeat 90s hip-hop") — encodes it into a vector, and returns the closest semantic matches. No user history or authentication required.
+6. **Free-Text Discovery (`/discover`):** A standalone endpoint accepts any free-text input - moods ("chill vibes for studying"), song names ("Bohemian Rhapsody"), or genre descriptions ("upbeat 90s hip-hop") - encodes it into a vector, and returns the closest semantic matches. No user history or authentication required.
 7. **Decoupled Fallback:** If the semantic engine returns zero results (e.g., no vectorized songs yet), the system falls back to genre-based YouTube trending search.
 
 ---
