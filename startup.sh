@@ -9,4 +9,4 @@ echo " Starting TuneTrace Backend..."
 
 # 2. Server Startup
 echo " Starting server on port 8000..."
-exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000
+exec gunicorn -w 2 --timeout 90 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8000
