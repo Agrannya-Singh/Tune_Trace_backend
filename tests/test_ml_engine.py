@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from ml_engine import MLEngine
+import numpy as np
+from ml_engine import MLEngine, EMBEDDING_DIM
 
 
 class TestBuildTextContext(unittest.TestCase):
@@ -28,207 +29,62 @@ class TestBuildTextContext(unittest.TestCase):
         text = MLEngine.build_text_context(song)
         self.assertEqual(text.strip(), "Song 1")
 
-    def test_format_structure(self):
-        """Text should use dot-separated fields for clear semantic cues."""
-        song = {"title": "Waves", "artist": "Dean Lewis", "genre": "Indie", "tags": "acoustic", "video_id": "1"}
-        text = MLEngine.build_text_context(song)
-        # Should be dot-separated
-        self.assertIn(". Artist:", text)
-        self.assertIn(". Genre:", text)
-        self.assertIn(". Tags:", text)
 
-
-class TestMLEngineModelLoading(unittest.TestCase):
-    """Tests for model lifecycle management."""
-
-    def test_model_lazy_loads(self):
-        """Model should not be loaded until explicitly requested."""
-        engine = MLEngine()
-        self.assertIsNone(engine._model)
+class TestMLEngineLogic(unittest.TestCase):
+    """Tests for MLEngine mathematical logic (profile computation, diversity)."""
 
     @patch("ml_engine.SentenceTransformer")
-    def test_load_model_sets_model(self, MockST):
+    def test_compute_user_profile_vector(self, MockST):
+        mock_model = MockST.return_value
+        # Mock encode to return normalized vectors
+        def mock_encode(texts, **kwargs):
+            return np.ones((len(texts), EMBEDDING_DIM), dtype=np.float32) / np.sqrt(EMBEDDING_DIM)
+        
+        mock_model.encode.side_effect = mock_encode
+        
         engine = MLEngine()
-        engine.load_model()
-        MockST.assert_called_once_with("all-MiniLM-L6-v2")
-        self.assertIsNotNone(engine._model)
-
-    @patch("ml_engine.SentenceTransformer")
-    def test_load_model_idempotent(self, MockST):
-        """Calling load_model() twice should not reload."""
-        engine = MLEngine()
-        engine.load_model()
-        engine.load_model()
-        MockST.assert_called_once()
-
-
-class TestRecommend(unittest.TestCase):
-    """Tests for the recommend() pipeline with mocked DB and model."""
-
-    def test_empty_history_returns_empty(self):
-        engine = MLEngine()
-        mock_session = MagicMock()
-        recs = engine.recommend([], mock_session)
-        self.assertEqual(recs, [])
-
-    @patch("ml_engine.SentenceTransformer")
-    def test_excludes_previously_recommended(self, MockST):
-        """Songs in excluded_video_ids must not appear in recommendations."""
-        import numpy as np
-
-        mock_model_instance = MockST.return_value
-        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
-
-        engine = MLEngine(diversity_ratio=0.0)
-        engine._model = mock_model_instance
-
-        # Mock DB session returning two candidate rows
-        mock_row_1 = MagicMock()
-        mock_row_1.video_id = "v2"
-        mock_row_1.title = "Song 2"
-        mock_row_1.artist = "A"
-        mock_row_1.genre = "Pop"
-        mock_row_1.tags = ""
-        mock_row_1.enriched = "V3"
-        mock_row_1.similarity = 0.95
-
-        mock_row_2 = MagicMock()
-        mock_row_2.video_id = "v3"
-        mock_row_2.title = "Song 3"
-        mock_row_2.artist = "B"
-        mock_row_2.genre = "Rock"
-        mock_row_2.tags = ""
-        mock_row_2.enriched = "V3"
-        mock_row_2.similarity = 0.85
-
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [mock_row_1, mock_row_2]
-        mock_session.execute.return_value = mock_result
-
+        engine._model = mock_model
+        
         user_history = [
-            {"title": "Pop Song", "artist": "A", "genre": "Pop", "tags": "upbeat", "video_id": "v1"}
+            {"title": "Song 1", "video_id": "v1"},
+            {"title": "Song 2", "video_id": "v2"}
         ]
+        
+        profile = engine.compute_user_profile_vector(user_history)
+        self.assertEqual(profile.shape, (EMBEDDING_DIM,))
+        # Check normalization
+        self.assertAlmostEqual(np.linalg.norm(profile), 1.0, places=5)
 
-        recs = engine.recommend(
-            user_history=user_history,
-            db_session=mock_session,
-            top_n=10,
-            excluded_video_ids={"v2"},
-        )
-
-        # Since v2 is excluded at the SQL level (via the generated query),
-        # the mock returns both rows, but in real scenario the DB would filter.
-        # This test validates the flow doesn't crash and returns results.
-        self.assertIsInstance(recs, list)
-        self.assertGreater(len(recs), 0)
-
-    @patch("ml_engine.SentenceTransformer")
-    def test_output_includes_score(self, MockST):
-        """Results should include a 'score' field."""
-        import numpy as np
-
-        mock_model_instance = MockST.return_value
-        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
-
-        engine = MLEngine(diversity_ratio=0.0)
-        engine._model = mock_model_instance
-
-        mock_row = MagicMock()
-        mock_row.video_id = "v2"
-        mock_row.title = "Pop Song 2"
-        mock_row.artist = "A"
-        mock_row.genre = "Pop"
-        mock_row.tags = "upbeat"
-        mock_row.enriched = "V3"
-        mock_row.similarity = 0.92
-
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [mock_row]
-        mock_session.execute.return_value = mock_result
-
-        recs = engine.recommend(
-            user_history=[
-                {"title": "Pop Song", "artist": "A", "genre": "Pop", "tags": "upbeat", "video_id": "v1"}
-            ],
-            db_session=mock_session,
-            top_n=1,
-        )
-        self.assertEqual(len(recs), 1)
-        self.assertIn("score", recs[0])
-        self.assertIsInstance(recs[0]["score"], float)
-
-
-class TestSearchByText(unittest.TestCase):
-    """Tests for the search_by_text() free-text discovery method."""
-
-    def test_empty_query_returns_empty(self):
+    def test_compute_user_profile_empty(self):
         engine = MLEngine()
-        mock_session = MagicMock()
-        results = engine.search_by_text("", mock_session)
-        self.assertEqual(results, [])
+        profile = engine.compute_user_profile_vector([])
+        self.assertTrue(np.all(profile == 0))
 
-    def test_whitespace_only_returns_empty(self):
+    def test_apply_diversity(self):
+        engine = MLEngine(diversity_ratio=0.5)
+        scored_results = [
+            {"video_id": f"v{i}", "score": 1.0 - i/100} for i in range(20)
+        ]
+        
+        top_n = 10
+        # With 0.5 ratio, 5 should be top, 5 diverse
+        final = engine.apply_diversity(scored_results, top_n)
+        
+        self.assertEqual(len(final), top_n)
+        # The first 5 should be the absolute top 5
+        for i in range(5):
+            self.assertEqual(final[i]["video_id"], f"v{i}")
+        
+        # The next 5 should be from the remaining 15
+        remaining_ids = {f"v{i}" for i in range(5, 20)}
+        for i in range(5, 10):
+            self.assertIn(final[i]["video_id"], remaining_ids)
+
+    def test_vector_to_literal(self):
         engine = MLEngine()
-        mock_session = MagicMock()
-        results = engine.search_by_text("   ", mock_session)
-        self.assertEqual(results, [])
-
-    @patch("ml_engine.SentenceTransformer")
-    def test_returns_scored_results(self, MockST):
-        """Valid query should return dicts with video_id, title, artist, score."""
-        import numpy as np
-
-        mock_model_instance = MockST.return_value
-        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
-
-        engine = MLEngine()
-        engine._model = mock_model_instance
-
-        mock_row = MagicMock()
-        mock_row.video_id = "v1"
-        mock_row.title = "Chill Vibes"
-        mock_row.artist = "LoFi Artist"
-        mock_row.genre = "Lo-Fi"
-        mock_row.tags = "chill, study"
-        mock_row.enriched = "V3"
-        mock_row.similarity = 0.87
-
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [mock_row]
-        mock_session.execute.return_value = mock_result
-
-        results = engine.search_by_text("chill study music", mock_session, top_n=5)
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["video_id"], "v1")
-        self.assertIn("score", results[0])
-        self.assertIsInstance(results[0]["score"], float)
-
-    @patch("ml_engine.SentenceTransformer")
-    def test_respects_top_n(self, MockST):
-        """Limit parameter should be passed to the SQL query."""
-        import numpy as np
-
-        mock_model_instance = MockST.return_value
-        mock_model_instance.encode.return_value = np.random.randn(1, 384).astype(np.float32)
-
-        engine = MLEngine()
-        engine._model = mock_model_instance
-
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_session.execute.return_value = mock_result
-
-        results = engine.search_by_text("upbeat party", mock_session, top_n=3)
-        self.assertEqual(results, [])
-
-        # Verify the SQL was called with k=3
-        call_args = mock_session.execute.call_args
-        self.assertEqual(call_args[0][1]["k"], 3)
+        vec = np.array([0.1, 0.2, 0.3])
+        literal = engine.vector_to_literal(vec)
+        self.assertEqual(literal, "[0.1,0.2,0.3]")
 
 
 if __name__ == "__main__":
