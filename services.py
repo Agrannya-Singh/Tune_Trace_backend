@@ -2,13 +2,14 @@
 
 import re
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import httpx
 import requests
 
 from db import User
 from repository import MusicRepository
+from engine import ml_engine
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class SuggestionService:
                 {
                     "title": item['snippet']['title'],
                     "artist": item['snippet']['channelTitle'],
-                    "youtube_video_id": item['id']['videoId'],
+                    "video_id": item['id']['videoId'],  # Unified key name
                     "score": 1.0
                 }
                 for item in items if 'videoId' in item.get('id', {})
@@ -116,43 +117,87 @@ class SuggestionService:
             logger.error(f"Fallback YouTube API error (sanitized): Status {getattr(e.response, 'status_code', 'N/A')}")
             return []
 
-    def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
-        """Return fallback suggestions when the semantic ML engine yields no results.
-
-        Collaborative filtering is intentionally disabled (COLLABORATIVE_FILTERING_ENABLED=False)
-        while the user base is small — it requires significant user overlap to produce
-        meaningful results and would mostly return empty lists at low user counts.
-        The fallback goes directly to genre/trending YouTube search instead.
-
-        To re-enable collaborative filtering in the future (e.g. once user count is large
-        enough for meaningful overlap), set COLLABORATIVE_FILTERING_ENABLED = True below.
+    def get_recommendations(
+        self, 
+        user_history: List[Dict], 
+        repo: MusicRepository, 
+        top_n: int = 10, 
+        excluded_video_ids: Optional[Set[str]] = None
+    ) -> List[Dict]:
         """
-        # ----------------------------------------------------------------
-        # Feature flag — flip to True when user base is large enough
-        # (collaborative filtering needs >=2 users who liked >=2 same songs)
-        # ----------------------------------------------------------------
-        COLLABORATIVE_FILTERING_ENABLED = False
+        Coordinates between MLEngine and MusicRepository to generate recommendations.
+        """
+        if not user_history:
+            return []
 
-        if COLLABORATIVE_FILTERING_ENABLED:
-            collaborative_raw = repo.get_collaborative_suggestions(
-                user, limit=num_suggestions)
-            if collaborative_raw:
-                logger.info(
-                    "Collaborative filtering returned %d suggestions for user %s.",
-                    len(collaborative_raw), user.user_id,
-                )
-                return [
-                    {"title": song.title, "artist": song.artist, "video_id": song.video_id}
-                    for song in collaborative_raw
-                ]
-            logger.warning(
-                "Collaborative filtering returned no results for user %s. "
-                "Falling through to genre/trending fallback.", user.user_id,
-            )
+        # 1. Compute User Profile Vector
+        profile_vector = ml_engine.compute_user_profile_vector(user_history)
+        vector_literal = ml_engine.vector_to_literal(profile_vector)
 
-        # Primary fallback: genre-based or global trending YouTube search
+        # 2. Build exclusion list
+        user_video_ids = {s["video_id"] for s in user_history}
+        all_excluded = user_video_ids | (excluded_video_ids or set())
+
+        # 3. Fetch candidates from DB
+        fetch_limit = top_n * 5
+        rows = repo.get_semantic_recommendations(vector_literal, fetch_limit, all_excluded)
+
+        if not rows:
+            return []
+
+        scored = [
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artist": row.artist,
+                "genre": row.genre,
+                "tags": row.tags,
+                "enriched": row.enriched,
+                "score": round(float(row.similarity), 4),
+            }
+            for row in rows
+        ]
+
+        # 4. Apply Diversity Logic
+        final = ml_engine.apply_diversity(scored, top_n)
+        
         logger.info(
-            "Using genre/trending YouTube fallback for user %s (genre=%s).",
-            user.user_id, genre or "Global Hits",
+            "SuggestionService: Generated %d recommendations (top_n=%d).",
+            len(final), top_n
         )
+        return final
+
+    def search_semantic(self, query: str, repo: MusicRepository, top_n: int = 10) -> List[Dict]:
+        """
+        Coordinates between MLEngine and MusicRepository for free-text search.
+        """
+        if not query or not query.strip():
+            return []
+
+        # 1. Encode query
+        query_vector = ml_engine.encode_single(query.strip())
+        vector_literal = ml_engine.vector_to_literal(query_vector)
+
+        # 2. Fetch from DB
+        rows = repo.semantic_search(vector_literal, top_n)
+
+        if not rows:
+            return []
+
+        results = [
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artist": row.artist,
+                "genre": row.genre,
+                "tags": row.tags,
+                "score": round(float(row.similarity), 4),
+            }
+            for row in rows
+        ]
+        return results
+
+    def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
+        """Return fallback suggestions when the semantic ML engine yields no results."""
+        # Collaborative filtering is disabled for now.
         return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)

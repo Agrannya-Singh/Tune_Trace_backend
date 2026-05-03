@@ -4,9 +4,9 @@ from typing import List, Optional, Set
 import logging
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, text
 
-from db import SongMetadata, User, UserLikedSong
+from models import SongMetadata, User, UserLikedSong
 
 
 class MusicRepository:
@@ -167,6 +167,55 @@ class MusicRepository:
         )
 
         return recommendations
+
     def get_songs_by_ids(self, song_ids: List[int]) -> List[SongMetadata]:
         """Returns a list of SongMetadata objects for the given IDs."""
         return self.db.query(SongMetadata).filter(SongMetadata.id.in_(song_ids)).all()
+
+    def get_semantic_recommendations(self, vector_literal: str, fetch_limit: int, exclude_video_ids: Set[str]) -> List[tuple]:
+        """
+        Executes pgvector cosine similarity search.
+        Returns a list of tuples containing (video_id, title, artist, genre, tags, enriched, similarity).
+        """
+        if exclude_video_ids:
+            placeholders = ", ".join(f":exc_{i}" for i in range(len(exclude_video_ids)))
+            sql = text(f"""
+                SELECT video_id, title, artist, genre, tags, enriched,
+                       1 - (embedding <=> :query_vec) AS similarity
+                FROM song_metadata
+                WHERE embedding IS NOT NULL
+                  AND video_id NOT IN ({placeholders})
+                ORDER BY embedding <=> :query_vec
+                LIMIT :k
+            """)
+            params = {"query_vec": vector_literal, "k": fetch_limit}
+            for i, vid in enumerate(exclude_video_ids):
+                params[f"exc_{i}"] = vid
+        else:
+            sql = text("""
+                SELECT video_id, title, artist, genre, tags, enriched,
+                       1 - (embedding <=> :query_vec) AS similarity
+                FROM song_metadata
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> :query_vec
+                LIMIT :k
+            """)
+            params = {"query_vec": vector_literal, "k": fetch_limit}
+
+        result = self.db.execute(sql, params)
+        return result.fetchall()
+
+    def semantic_search(self, vector_literal: str, limit: int) -> List[tuple]:
+        """
+        Executes pgvector cosine similarity search for free-text queries.
+        """
+        sql = text("""
+            SELECT video_id, title, artist, genre, tags, enriched,
+                   1 - (embedding <=> :query_vec) AS similarity
+            FROM song_metadata
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> :query_vec
+            LIMIT :k
+        """)
+        result = self.db.execute(sql, {"query_vec": vector_literal, "k": limit})
+        return result.fetchall()
