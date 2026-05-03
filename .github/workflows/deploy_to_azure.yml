@@ -16,6 +16,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Model Weights
+        uses: actions/cache@v4
+        id: cache-model
+        with:
+          path: ./models
+          key: model-all-MiniLM-L6-v2-v1
+
+      - name: Download Model Weights (if not cached)
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: |
+          pip install sentence-transformers
+          python utils/download_model.py
+
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -34,6 +52,7 @@ jobs:
       # 2. Build the Docker Image
       - name: Build and Push Image
         run: |
+          # Build using the local context which now includes ./models
           docker build -t songsouggest.azurecr.io/backend:${{ github.sha }} .
           docker push songsouggest.azurecr.io/backend:${{ github.sha }}
 

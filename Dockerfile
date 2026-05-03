@@ -22,9 +22,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5.  Pre-download model weights during the BUILD phase
-# This moves the 15-30 second "bottleneck" from  users to the CI/CD pipeline.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_NAME}')"
+# 5.  Copy pre-downloaded model weights
+# This prevents re-downloading ~150MB from HuggingFace during every build.
+COPY ./models /app/models
+ENV MODEL_PATH=/app/models/all-MiniLM-L6-v2
 
 # 6. Copy application code
 # 

@@ -13,6 +13,7 @@ Replaces the legacy TF-IDF engine with:
 import logging
 from typing import Dict, List, Optional, Set
 
+import os
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_DIVERSITY_RATIO = 0.4  # 40% of final results from diverse sampling
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
+# Local path priority (e.g. /app/models/all-MiniLM-L6-v2)
+MODEL_PATH = os.getenv("MODEL_PATH", MODEL_NAME)
 
 
 class MLEngine:
@@ -47,8 +50,8 @@ class MLEngine:
         on the first request (~90 MB constant footprint).
         """
         if self._model is None:
-            logger.info("Loading SentenceTransformer model '%s'...", MODEL_NAME)
-            self._model = SentenceTransformer(MODEL_NAME)
+            logger.info("Loading SentenceTransformer model from '%s'...", MODEL_PATH)
+            self._model = SentenceTransformer(MODEL_PATH)
             logger.info("Model loaded successfully (%d-d vectors).", EMBEDDING_DIM)
 
     @property

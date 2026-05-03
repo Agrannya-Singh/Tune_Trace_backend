@@ -37,6 +37,7 @@ logger = logging.getLogger("v3_janitor")
 # ---------------------------------------------------------------------------
 MODEL_NAME = "all-MiniLM-L6-v2"
 BATCH_SIZE = 100
+MODEL_PATH = os.getenv("MODEL_PATH", MODEL_NAME)
 
 
 def build_text_context(row) -> str:
@@ -58,9 +59,9 @@ def run_backfill():
     """Main backfill loop: vectorize V2 rows → V3."""
     load_dotenv()
 
-    logger.info("Loading SentenceTransformer model '%s'...", MODEL_NAME)
+    logger.info("Loading SentenceTransformer model from '%s'...", MODEL_PATH)
     t0 = time.time()
-    model = SentenceTransformer(MODEL_NAME)
+    model = SentenceTransformer(MODEL_PATH)
     logger.info("Model loaded in %.1fs.", time.time() - t0)
 
     db = SessionLocal()
