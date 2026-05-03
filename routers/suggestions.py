@@ -34,23 +34,39 @@ async def post_suggestions(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Service is not configured.")
 
     try:
-        # 1. Search YouTube for songs in parallel
-        tasks = [
-            suggestion_service._search_youtube_for_song_async(song_name)
-            for song_name in request.songs
-        ]
-        with track_latency("YouTube:Search_Parallel"):
-            results = await asyncio.gather(*tasks)
-
-        # 2. Process results and persist song metadata
+        # 1. Identify songs already in DB vs those needing YouTube search
         song_metadata_ids_to_like = set()
-        for video_info in results:
-            if not video_info:
-                continue
-            song_meta = repo.get_song_metadata_by_video_id(video_info["video_id"])
-            if not song_meta:
-                song_meta = repo.create_song_metadata(video_info)
-            song_metadata_ids_to_like.add(song_meta.id)
+        songs_needing_search = []
+        
+        for song_str in request.songs:
+            # Try to parse "Title - Artist"
+            parts = song_str.split(" - ", 1)
+            if len(parts) == 2:
+                title, artist = parts
+                existing = repo.get_song_by_title_and_artist(title.strip(), artist.strip())
+                if existing:
+                    song_metadata_ids_to_like.add(existing.id)
+                    continue
+            
+            songs_needing_search.append(song_str)
+
+        # 2. Search YouTube only for unknown songs
+        if songs_needing_search:
+            tasks = [
+                suggestion_service._search_youtube_for_song_async(song_name)
+                for song_name in songs_needing_search
+            ]
+            with track_latency("YouTube:Search_Parallel"):
+                results = await asyncio.gather(*tasks)
+
+            # Process results and persist new song metadata
+            for video_info in results:
+                if not video_info:
+                    continue
+                song_meta = repo.get_song_metadata_by_video_id(video_info["video_id"])
+                if not song_meta:
+                    song_meta = repo.create_song_metadata(video_info)
+                song_metadata_ids_to_like.add(song_meta.id)
 
         user = repo.get_or_create_user(request.user_id)
 

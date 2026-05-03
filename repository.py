@@ -37,6 +37,12 @@ class MusicRepository:
     def get_song_metadata_by_video_id(self, video_id: str) -> Optional[SongMetadata]:
         return self.db.query(SongMetadata).filter_by(video_id=video_id).one_or_none()
 
+    def get_song_by_title_and_artist(self, title: str, artist: str) -> Optional[SongMetadata]:
+        return self.db.query(SongMetadata).filter(
+            func.lower(SongMetadata.title) == title.lower(),
+            func.lower(SongMetadata.artist) == artist.lower()
+        ).first()
+
     def create_song_metadata(self, video_data: dict) -> SongMetadata:
         song = SongMetadata(
             video_id=video_data["video_id"],
