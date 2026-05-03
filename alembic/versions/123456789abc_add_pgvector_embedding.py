@@ -11,7 +11,7 @@ import pgvector.sqlalchemy
 
 # revision identifiers, used by Alembic.
 revision = '123456789abc'
-down_revision = 'add_user_oauth_fields'
+down_revision = 'b2c3d4e5f6g7'
 branch_labels = None
 depends_on = None
 

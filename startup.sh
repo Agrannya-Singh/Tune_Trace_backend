@@ -4,8 +4,7 @@ set -e
 echo " Starting TuneTrace Backend..."
 
 # 1. Run database migrations
-#echo " Running Alembic migrations..."
-#alembic upgrade head ## TODO : alembic migrations to be added to CI 
+# Migrations are now handled in the CI/CD pipeline (.github/workflows/deploy_to_azure.yml)
 
 # 2. Server Startup
 echo " Starting server on port 8000..."

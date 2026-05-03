@@ -141,21 +141,21 @@ graph LR
         A[Push to 'main'] --> B(Trigger Workflow)
     end
 
-    subgraph Build_Job ["CI: Build Job on Ubuntu 22.04"]
+    subgraph Build_Job ["CI: Build & Migrate Job"]
         B --> C[Checkout Code]
         C --> D[Setup Python 3.11]
         D --> E[Install Dependencies]
-        E --> F["Upload Artifact<br/>(Excludes venv: !antenv)"]
+        E --> M[Run Alembic Migrations]
+        M --> F["Build & Push Docker Image"]
     end
 
     subgraph Deploy_Job ["CD: Deploy Job Azure"]
-        F --> G[Download Artifact]
-        G --> H[Azure Login via OIDC]
+        F --> H[Azure Login via OIDC]
         H --> I[Deploy to Web App]
     end
 
     subgraph Production [Environment]
-        I --> J["Azure Web App: 'song-suggest-fasapi'"]
+        I --> J["Azure Web App: 'song-suggest-fastapi'"]
         J --> K[Production Slot]
     end
 ```
