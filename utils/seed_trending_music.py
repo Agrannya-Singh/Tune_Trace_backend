@@ -250,25 +250,13 @@ def run_seeder(api_key: Optional[str] = None):
                 batch_size=64,
             )
 
-            # Attach embeddings to ORM objects before bulk save
-            # We need to use raw SQL since SQLAlchemy doesn't know about vector type
-            logger.info(f"Saving {len(new_songs_to_insert)} new trending songs to database...")
-            db.bulk_save_objects(new_songs_to_insert)
-            db.flush()  # flush to get IDs assigned
-
-            # Now update embeddings via raw SQL
-            from sqlalchemy import text as sa_text
+            # Attach embeddings directly to ORM objects
             for song, embedding in zip(new_songs_to_insert, embeddings):
-                vector_literal = (
-                    "[" + ",".join(str(float(x)) for x in embedding) + "]"
-                )
-                db.execute(
-                    sa_text(
-                        "UPDATE song_metadata SET embedding = :vec WHERE video_id = :vid"
-                    ),
-                    {"vec": vector_literal, "vid": song.video_id},
-                )
+                # model.encode returns a numpy array, but pgvector accepts it directly or as a list
+                song.embedding = embedding.tolist()
 
+            logger.info(f"Saving {len(new_songs_to_insert)} new trending songs to database...")
+            db.add_all(new_songs_to_insert)
             db.commit()
             logger.info("Database commit successful (with V3 embeddings).")
         else:
