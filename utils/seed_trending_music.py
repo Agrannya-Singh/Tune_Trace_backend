@@ -6,7 +6,7 @@ model always has a fresh and diverse catalog of candidates.
 
 Features:
 - Fetches "mostPopular" videos in the Music category (id=10).
-- Uses pagination to fetch up to a target number of songs (default 300).
+- Uses pagination to fetch up to a target number of songs (default 1000).
 - Extracts genre and tags immediately (acts as an auto-enrichment).
 - Skips songs already present in the database.
 - Uses exponential backoff for YouTube API reliability.
@@ -41,16 +41,16 @@ ENRICHMENT_VERSION = "V3"
 MODEL_NAME = "all-MiniLM-L6-v2"
 
 SEARCH_QUERIES = [
-    "top pop songs official video",
-    "top hip hop rap hits",
-    "top electronic dance edm music",
-    "top rock alternative songs",
-    "top r&b soul music",
-    "trending latin reggaeton hits",
-    "top country music songs",
-    "indie alternative vibes",
-    "top global viral chart",
-    "best acoustic chill vibes"
+    "top pop official music video -compilation -mix",
+    "hip hop rap official music video -compilation -mix",
+    "rock alternative official music video -compilation -mix",
+    "edm electronic dance official music video -compilation -mix",
+    "r&b soul official music video -compilation -mix",
+    "latin music hits official music video -compilation -mix",
+    "country songs official music video -compilation -mix",
+    "indie alternative official music video -compilation -mix",
+    "k-pop official music video -compilation -mix",
+    "afrobeats official music video -compilation -mix"
 ]
 
 
@@ -202,6 +202,12 @@ def run_seeder(api_key: Optional[str] = None):
                             
                         title = snippet.get("title", "")
                         artist = snippet.get("channelTitle", "")
+                        
+                        # Filter out compilations/mixes to ensure only official singles/videos are added
+                        title_lower = title.lower()
+                        if any(x in title_lower for x in ["compilation", "mix", "full album", "best of", "playlist"]):
+                            logger.info(f"  -> Skipping potential compilation/mix: {title}")
+                            continue
                         
                         # Auto-enrich genre and tags
                         genre = _extract_genre_from_tags(tags_list)
