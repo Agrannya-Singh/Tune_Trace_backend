@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Defaults — can be overridden via constructor
 # ---------------------------------------------------------------------------
-DEFAULT_DIVERSITY_RATIO = 0.4  # 40% of final results from diverse sampling
+DEFAULT_DIVERSITY_RATIO = 0.2  # 20% of final results from diverse sampling
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 # Local path priority (e.g. /app/models/all-MiniLM-L6-v2)

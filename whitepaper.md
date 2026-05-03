@@ -34,7 +34,7 @@ graph TD
         J --> L["pgvector <=> Cosine Distance"]
         K --> L
         L --> M["Ranked Candidate Pool"]
-        M --> N["Diversity-Aware Selection (60/40 split)"]
+        M --> N["Diversity-Aware Selection (80/20 split)"]
         N --> O["Final Recommendations"]
     end
 ```
@@ -46,7 +46,7 @@ The V3 semantic pipeline delivers several key advantages over the legacy TF-IDF 
 1. **Dense Vector Encoding:** Song metadata is encoded into 384-dimensional dense vectors using `all-MiniLM-L6-v2`, capturing deep semantic relationships that sparse TF-IDF token matching inherently misses (e.g., "lo-fi chill beats" ↔ "relaxing ambient music").
 2. **pgvector Cosine Distance:** Recommendations are computed entirely within PostgreSQL via the `<=>` cosine distance operator on an HNSW-indexed `embedding` column, eliminating the need to fetch all candidates into application memory.
 3. **Recency-Decay User Profile:** User history vectors are weighted with exponential decay (`e^(-t)`), ensuring the profile adapts to evolving music tastes rather than averaging over stale preferences.
-4. **Diversity-Aware Selection:** 60% of results are selected by strict similarity ranking; 40% are sampled pseudo-randomly from remaining high-scoring candidates to prevent echo chambers.
+4. **Diversity-Aware Selection:** 80% of results are selected by strict similarity ranking; 20% are sampled pseudo-randomly from remaining high-scoring candidates to prevent echo chambers.
 5. **Anti-Repetition Tracking:** Previously served recommendations are cached per-user in Redis (24h TTL) and excluded at the SQL level, guaranteeing catalog rotation.
 6. **Free-Text Discovery (`/discover`):** A standalone endpoint accepts any free-text input — moods ("chill vibes for studying"), song names ("Bohemian Rhapsody"), or genre descriptions ("upbeat 90s hip-hop") — encodes it into a vector, and returns the closest semantic matches. No user history or authentication required.
 7. **Decoupled Fallback:** If the semantic engine returns zero results (e.g., no vectorized songs yet), the system falls back to genre-based YouTube trending search.
