@@ -134,10 +134,7 @@ Contains the vectorized music catalog.
 Join table mapping users to their musical preferences, enabling the recency-weighted profiling logic.
 
 ---
+## Cold Startup Time
+<img width="1611" height="893" alt="image" src="https://github.com/user-attachments/assets/a212d32c-8dca-47e0-bbfc-d407025f54c8" />
+Typical startup in a cold boot for the fastapi server would be around 2-4 minutes.
 
-## Testing with Bruno
-
-The repository includes a Bruno collection located in the TuneTrace-Backend folder.
-1. Install Bruno (https://www.usebruno.com/).
-2. Import the collection.
-3. Use the Production environment to test live endpoints.
