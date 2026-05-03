@@ -3,6 +3,10 @@ name: Deploy TuneTrace Backend to Azure (Admin Auth)
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.sqlite'
+      - '**/*.csv'
   workflow_dispatch:
 
 permissions:

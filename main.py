@@ -5,7 +5,6 @@ import logging
 import os
 import json
 from contextlib import asynccontextmanager
-import threading
 from typing import List, Set, Optional
 
 # --- Third-Party Imports ---
@@ -28,7 +27,6 @@ from api_models import (
 )
 from dependencies import get_repo, get_suggestion_service
 from utils.metrics import track_latency
-from utils.enrichment import run_enrichment
 
 # ==============================================================================
 # --- Initial Application Setup ---
@@ -81,16 +79,6 @@ async def lifespan(application: FastAPI):
     # --- Pre-load SentenceTransformer model into RAM (~90 MB) ---
     ml_engine.load_model()
     logger.info("Application startup complete.")
-
-    # --- Launch enrichment in a background thread (non-blocking) ---
-    enrichment_thread = threading.Thread(
-        target=run_enrichment,
-        kwargs={"api_key": YOUTUBE_API_KEY},
-        daemon=True,
-        name="song-enrichment",
-    )
-    enrichment_thread.start()
-    logger.info("Enrichment background thread started.")
 
     yield  # --- Application runs here ---
 
