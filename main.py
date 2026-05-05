@@ -9,9 +9,9 @@ from sqlalchemy import text
 from config import YOUTUBE_API_KEY
 from redis_utils import redis_client
 from db import SessionLocal
-from services import SuggestionService, ChatService
+from services import SuggestionService
 from engine import ml_engine
-from routers import suggestions, users, discovery, chat
+from routers import suggestions, users, discovery
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,6 @@ async def lifespan(application: FastAPI):
     """Manages startup and shutdown for the application."""
     # --- Startup ---
     application.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY)
-    application.state.chat_service = ChatService(suggestion_service=application.state.suggestion_service)
     logger.info("Application starting up...")
     try:
         with SessionLocal() as session:
@@ -65,7 +64,6 @@ app.add_middleware(
 app.include_router(suggestions.router)
 app.include_router(users.router)
 app.include_router(discovery.router)
-app.include_router(chat.router)
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
 async def health_check():

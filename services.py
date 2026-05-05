@@ -10,11 +10,6 @@ import requests
 from db import User
 from repository import MusicRepository
 from engine import ml_engine
-from config import GEMINI_API_KEY
-
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import HumanMessage, AIMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -203,98 +198,6 @@ class SuggestionService:
         return results
 
     def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
-        """
-        Return fallback suggestions when the semantic ML engine yields no results.
-        Uses YouTube Search API to find trending songs in a genre.
-        """
+        """Return fallback suggestions when the semantic ML engine yields no results."""
+        # Collaborative filtering is disabled for now.
         return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)
-
-
-class ChatService:
-    """
-    Complete RAG (Retrieval-Augmented Generation) Service.
-    Retrieves: 
-      1. User Taste Profile (from PostgreSQL Likes)
-      2. Semantic Knowledge (from Vector Search)
-    Generates:
-      Engaging conversational responses via Gemini 3 Flash.
-    """
-    def __init__(self, suggestion_service: SuggestionService):
-        self.suggestion_service = suggestion_service
-        if GEMINI_API_KEY:
-            self.llm = ChatGoogleGenerativeAI(
-                model="gemini-3-flash-preview",
-                google_api_key=GEMINI_API_KEY,
-                temperature=0.7
-            )
-        else:
-            self.llm = None
-
-    async def get_chat_response(self, user_id: str, message: str, history: List[Dict], repo: MusicRepository) -> Dict:
-        if not self.llm:
-            return {
-                "response": "I'm sorry, my brain (Gemini API) isn't connected. Set GEMINI_API_KEY to enable me!",
-                "context_songs": []
-            }
-
-        # 1. RAG Part A: Retrieve User Taste Context
-        user = repo.get_user(user_id)
-        user_taste_context = "User has no recorded likes yet."
-        if user:
-            likes = repo.get_user_liked_songs_objects(user.user_id)
-            if likes:
-                user_taste_context = "User's Recent Liked Songs:\n"
-                for s in likes[-10:]: # Recency bias: last 10 likes
-                    user_taste_context += f"- {s.title} by {s.artist}\n"
-
-        # 2. RAG Part B: Retrieve Semantic Song Context
-        # This finds songs that semantically match the user's current chat message.
-        context_songs = self.suggestion_service.search_semantic(message, repo, top_n=5)
-        semantic_context = "No specific semantic matches found for this query."
-        if context_songs:
-            semantic_context = "Semantic Matches from our Library:\n"
-            for s in context_songs:
-                semantic_context += f"- {s['title']} by {s['artist']} (Genre: {s.get('genre','N/A')})\n"
-
-        # 3. LangChain Template: The "Generation" logic
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content=(
-                "You are 'TuneTrace AI', a helpful and chatty music discovery assistant. "
-                "You ground your answers in the user's taste and our music library. "
-                "Use the 'User Taste Context' to understand their preferences. "
-                "Use the 'Semantic Matches' to suggest real songs they can find in our app. "
-                "Be enthusiastic, use emojis, and keep the conversation musical! 🎵"
-            )),
-            MessagesPlaceholder(variable_name="history"),
-            HumanMessage(content=(
-                f"### CONTEXTUAL DATA ###\n"
-                f"{user_taste_context}\n\n"
-                f"{semantic_context}\n\n"
-                f"### USER QUERY ###\n"
-                f"{message}"
-            ))
-        ])
-
-        # Convert simple history dicts to LangChain Message objects
-        langchain_history = []
-        for h in history:
-            if h["role"] == "user":
-                langchain_history.append(HumanMessage(content=h["content"]))
-            else:
-                langchain_history.append(AIMessage(content=h["content"]))
-
-        # Chain Construction: Prompt -> Gemini
-        chain = prompt | self.llm
-        
-        try:
-            response = await chain.ainvoke({"history": langchain_history})
-            return {
-                "response": response.content,
-                "context_songs": context_songs
-            }
-        except Exception as e:
-            logger.error(f"Gemini RAG Error: {e}")
-            return {
-                "response": "My circuits are a bit fuzzy right now. Can we try that again? 🎸",
-                "context_songs": context_songs
-            }

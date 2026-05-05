@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 try:
     REDIS_TTL_SECONDS = int(os.getenv("REDIS_TTL_SECONDS", "3600"))
@@ -20,6 +19,3 @@ except (ValueError, TypeError):
 
 if not YOUTUBE_API_KEY:
     logger.critical("FATAL: YOUTUBE_API_KEY environment variable not set.")
-
-if not GEMINI_API_KEY:
-    logger.warning("GEMINI_API_KEY not set. Chat features will be disabled.")
