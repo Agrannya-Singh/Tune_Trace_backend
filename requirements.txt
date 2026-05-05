@@ -24,3 +24,9 @@ httpx
 
 # pgvector support (SQLAlchemy binding)
 pgvector
+
+# Generative AI & LangChain
+google-generativeai
+langchain-google-genai
+langchain
+langchain-community
