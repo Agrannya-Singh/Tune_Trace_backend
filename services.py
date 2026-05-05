@@ -217,7 +217,7 @@ class ChatService:
       1. User Taste Profile (from PostgreSQL Likes)
       2. Semantic Knowledge (from Vector Search)
     Generates:
-      Engaging conversational responses via Gemini 3 Flash.
+      Engaging conversational responses via Gemini 1.5 Flash.
     """
     def __init__(self, suggestion_service: SuggestionService):
         self.suggestion_service = suggestion_service
@@ -234,6 +234,7 @@ class ChatService:
         # 1. RAG Part A: Retrieve User Taste Context
         user_taste_context = "User has no recorded likes or profile yet."
         profile_recommendations = []
+        user_history_dicts = []
         
         if user_id:
             user = repo.get_user(user_id)
@@ -243,17 +244,22 @@ class ChatService:
                     user_taste_context = "User's Recent Liked Songs:\n"
                     for s in likes[:10]:
                         user_taste_context += f"- {s.title} by {s.artist}\n"
+                        user_history_dicts.append({
+                            "video_id": s.video_id,
+                            "title": s.title,
+                            "artist": s.artist,
+                            "genre": s.genre,
+                            "tags": s.tags
+                        })
                     
                     # Compute Semantic Profile Matches
-                    # This uses the user's vector profile to find songs they'll like regardless of the query
                     profile_recommendations = self.suggestion_service.get_recommendations(
-                        user=user,
+                        user_history=user_history_dicts,
                         repo=repo,
-                        num_recommendations=5
+                        top_n=5
                     )
 
         # 2. RAG Part B: Retrieve Query-Specific Context
-        # This finds songs that semantically match the user's CURRENT chat message.
         context_songs = self.suggestion_service.search_semantic(message, repo, top_n=top_n)
         
         # Build Semantic Context string for the LLM
@@ -265,9 +271,9 @@ class ChatService:
                 semantic_context += f"- {s['title']} by {s['artist']}{genre_str}\n"
         
         if profile_recommendations:
-            semantic_context += "\nSongs matching your general music profile:\n"
+            semantic_context += "\nSongs matching your general music profile (Taste Grounding):\n"
             for s in profile_recommendations:
-                semantic_context += f"- {s['title']} by {s['artist']} (Recommended based on taste)\n"
+                semantic_context += f"- {s['title']} by {s['artist']} (Recommended based on history)\n"
 
         if not semantic_context:
             semantic_context = "No specific semantic matches found in our library."
@@ -283,17 +289,18 @@ class ChatService:
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content=(
                 "You are 'TuneTrace AI', a helpful and chatty music discovery assistant. "
-                "You ground your answers in the user's taste and our music library. "
-                "Use the 'User Taste Context' and 'Semantic Context' to understand their preferences and suggest real songs. "
-                "If the user asks for recommendations, prioritize the 'Songs matching your general music profile'. "
-                "Always mention specific songs from the provided context. "
+                "You MUST ground your answers in the provided context data. "
+                "1. Refer to the user's recent likes to show you know their taste. "
+                "2. Use the 'Direct matches' to answer their specific query. "
+                "3. Use 'Songs matching your general music profile' to provide personalized discovery. "
+                "4. Always mention specific songs from the provided context and EXPLAIN WHY they fit the user's request or taste. "
                 "Be enthusiastic, use emojis, and keep the conversation musical! 🎵"
             )),
             MessagesPlaceholder(variable_name="history"),
             HumanMessage(content=(
                 f"### CONTEXTUAL DATA ###\n"
-                f"{user_taste_context}\n\n"
-                f"{semantic_context}\n\n"
+                f"--- USER TASTE PROFILE ---\n{user_taste_context}\n\n"
+                f"--- SEMANTIC LIBRARY MATCHES ---\n{semantic_context}\n\n"
                 f"### USER QUERY ###\n"
                 f"{message}"
             ))
@@ -304,7 +311,7 @@ class ChatService:
         for h in history:
             if h["role"] == "user":
                 langchain_history.append(HumanMessage(content=h["content"]))
-            else:
+            elif h["role"] == "assistant":
                 langchain_history.append(AIMessage(content=h["content"]))
 
         # Chain Construction: Prompt -> Gemini
