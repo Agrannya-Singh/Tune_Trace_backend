@@ -230,40 +230,63 @@ class ChatService:
         else:
             self.llm = None
 
-    async def get_chat_response(self, user_id: str, message: str, history: List[Dict], repo: MusicRepository, top_n: int = 5) -> Dict:
+    async def get_chat_response(self, user_id: Optional[str], message: str, history: List[Dict], repo: MusicRepository, top_n: int = 5) -> Dict:
         # 1. RAG Part A: Retrieve User Taste Context
-        user = repo.get_user(user_id)
-        user_taste_context = "User has no recorded likes yet."
-        if user:
-            likes = repo.get_user_liked_songs_objects(user.user_id)
-            if likes:
-                user_taste_context = "User's Recent Liked Songs:\n"
-                for s in likes[:10]: # Recency bias: last 10 likes
-                    user_taste_context += f"- {s.title} by {s.artist}\n"
+        user_taste_context = "User has no recorded likes or profile yet."
+        profile_recommendations = []
+        
+        if user_id:
+            user = repo.get_user(user_id)
+            if user:
+                likes = repo.get_user_liked_songs_objects(user.user_id)
+                if likes:
+                    user_taste_context = "User's Recent Liked Songs:\n"
+                    for s in likes[:10]:
+                        user_taste_context += f"- {s.title} by {s.artist}\n"
+                    
+                    # Compute Semantic Profile Matches
+                    # This uses the user's vector profile to find songs they'll like regardless of the query
+                    profile_recommendations = self.suggestion_service.get_recommendations(
+                        user=user,
+                        repo=repo,
+                        num_recommendations=5
+                    )
 
-        # 2. RAG Part B: Retrieve Semantic Song Context
-        # This finds songs that semantically match the user's current chat message.
+        # 2. RAG Part B: Retrieve Query-Specific Context
+        # This finds songs that semantically match the user's CURRENT chat message.
         context_songs = self.suggestion_service.search_semantic(message, repo, top_n=top_n)
-        semantic_context = "No specific semantic matches found for this query."
+        
+        # Build Semantic Context string for the LLM
+        semantic_context = ""
         if context_songs:
-            semantic_context = "Semantic Matches from our Library:\n"
+            semantic_context += "Direct matches for your query:\n"
             for s in context_songs:
-                semantic_context += f"- {s['title']} by {s['artist']} (Genre: {s.get('genre','N/A')})\n"
+                genre_str = f" [Genre: {s.get('genre')}]" if s.get('genre') else ""
+                semantic_context += f"- {s['title']} by {s['artist']}{genre_str}\n"
+        
+        if profile_recommendations:
+            semantic_context += "\nSongs matching your general music profile:\n"
+            for s in profile_recommendations:
+                semantic_context += f"- {s['title']} by {s['artist']} (Recommended based on taste)\n"
+
+        if not semantic_context:
+            semantic_context = "No specific semantic matches found in our library."
 
         # 3. Handle Missing LLM (Graceful Degradation)
         if not self.llm:
             return {
                 "response": "AI generation is disabled (GEMINI_API_KEY missing), but here are some matches I found! 🔍",
-                "context_songs": context_songs
+                "context_songs": context_songs + profile_recommendations
             }
 
-        # 3. LangChain Template: The "Generation" logic
+        # 4. LangChain Template: The "Generation" logic
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content=(
                 "You are 'TuneTrace AI', a helpful and chatty music discovery assistant. "
                 "You ground your answers in the user's taste and our music library. "
-                "Use the 'User Taste Context' to understand their preferences. "
-                "Use the 'Semantic Matches' to suggest real songs they can find in our app. "
+                "Use the 'User Taste Context' and 'Semantic Context' to understand their preferences and suggest real songs. "
+                "If the user asks for recommendations, prioritize the 'Songs matching your general music profile'. "
+                "Always mention specific songs from the provided context. "
                 "Be enthusiastic, use emojis, and keep the conversation musical! 🎵"
             )),
             MessagesPlaceholder(variable_name="history"),
@@ -291,11 +314,11 @@ class ChatService:
             response = await chain.ainvoke({"history": langchain_history})
             return {
                 "response": response.content,
-                "context_songs": context_songs
+                "context_songs": context_songs + profile_recommendations
             }
         except Exception as e:
             logger.error(f"Gemini RAG Error: {e}")
             return {
                 "response": "My circuits are a bit fuzzy right now. Can we try that again? 🎸",
-                "context_songs": context_songs
+                "context_songs": context_songs + profile_recommendations
             }

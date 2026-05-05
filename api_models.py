@@ -39,8 +39,13 @@ class DiscoverSong(BaseModel):
     score: float = Field(..., description="Semantic similarity score (0-1).")
 
 
+class ChatMessage(BaseModel):
+    role: str # 'user' or 'assistant'
+    content: str
+
+
 class DiscoverRequest(BaseModel):
-    user_id: str = Field(..., description="User ID for personalized context.")
+    user_id: Optional[str] = Field(None, description="User ID for personalized context.")
     query: str = Field(
         ...,
         min_length=2,
@@ -58,11 +63,6 @@ class DiscoverRequest(BaseModel):
         default_factory=list,
         description="Optional conversation history for multi-turn discovery."
     )
-
-
-class ChatMessage(BaseModel):
-    role: str # 'user' or 'assistant'
-    content: str
 
 
 class DiscoverResponse(BaseModel):
