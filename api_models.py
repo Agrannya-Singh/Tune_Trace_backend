@@ -39,13 +39,7 @@ class DiscoverSong(BaseModel):
     score: float = Field(..., description="Semantic similarity score (0-1).")
 
 
-class ChatMessage(BaseModel):
-    role: str # 'user' or 'assistant'
-    content: str
-
-
 class DiscoverRequest(BaseModel):
-    user_id: Optional[str] = Field(None, description="User ID for personalized context.")
     query: str = Field(
         ...,
         min_length=2,
@@ -59,16 +53,24 @@ class DiscoverRequest(BaseModel):
         le=30,
         description="Number of results to return (max 30).",
     )
-    history: List[ChatMessage] = Field(
-        default_factory=list,
-        description="Optional conversation history for multi-turn discovery."
-    )
 
 
 class DiscoverResponse(BaseModel):
     query: str
     results: List[DiscoverSong]
-    ai_response: Optional[str] = Field(
-        None, 
-        description="Conversational explanation or response from Gemini RAG pipeline."
-    )
+
+
+class ChatMessage(BaseModel):
+    role: str # 'user' or 'assistant'
+    content: str
+
+
+class ChatRequest(BaseModel):
+    user_id: str
+    message: str
+    history: List[ChatMessage] = []
+
+
+class ChatResponse(BaseModel):
+    response: str
+    context_songs: List[SongSuggestion]

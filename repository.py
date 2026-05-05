@@ -13,10 +13,6 @@ class MusicRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_user(self, user_id: str) -> Optional[User]:
-        """Retrieves a user by their unique string ID."""
-        return self.db.query(User).filter_by(user_id=user_id).one_or_none()
-
     def get_or_create_user(self, user_id: str) -> User:
         """
         Retrieves a user by ID or creates a new one if not found.
@@ -100,7 +96,6 @@ class MusicRepository:
             .join(UserLikedSong, UserLikedSong.song_id == SongMetadata.id)
             .join(User, User.id == UserLikedSong.user_id)
             .filter(User.user_id == user_id)
-            .order_by(UserLikedSong.created_at.desc())
             .all()
         )
 

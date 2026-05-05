@@ -11,7 +11,7 @@ from redis_utils import redis_client
 from db import SessionLocal
 from services import SuggestionService, ChatService
 from engine import ml_engine
-from routers import suggestions, users, discovery
+from routers import suggestions, users, discovery, chat
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ app.add_middleware(
 app.include_router(suggestions.router)
 app.include_router(users.router)
 app.include_router(discovery.router)
+app.include_router(chat.router)
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
 async def health_check():
