@@ -30,3 +30,4 @@ google-generativeai
 langchain-google-genai
 langchain
 langchain-community
+langchain-core
