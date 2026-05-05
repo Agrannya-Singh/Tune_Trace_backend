@@ -230,13 +230,7 @@ class ChatService:
         else:
             self.llm = None
 
-    async def get_chat_response(self, user_id: str, message: str, history: List[Dict], repo: MusicRepository) -> Dict:
-        if not self.llm:
-            return {
-                "response": "I'm sorry, my brain (Gemini API) isn't connected. Set GEMINI_API_KEY to enable me!",
-                "context_songs": []
-            }
-
+    async def get_chat_response(self, user_id: str, message: str, history: List[Dict], repo: MusicRepository, top_n: int = 5) -> Dict:
         # 1. RAG Part A: Retrieve User Taste Context
         user = repo.get_user(user_id)
         user_taste_context = "User has no recorded likes yet."
@@ -244,17 +238,24 @@ class ChatService:
             likes = repo.get_user_liked_songs_objects(user.user_id)
             if likes:
                 user_taste_context = "User's Recent Liked Songs:\n"
-                for s in likes[-10:]: # Recency bias: last 10 likes
+                for s in likes[:10]: # Recency bias: last 10 likes
                     user_taste_context += f"- {s.title} by {s.artist}\n"
 
         # 2. RAG Part B: Retrieve Semantic Song Context
         # This finds songs that semantically match the user's current chat message.
-        context_songs = self.suggestion_service.search_semantic(message, repo, top_n=5)
+        context_songs = self.suggestion_service.search_semantic(message, repo, top_n=top_n)
         semantic_context = "No specific semantic matches found for this query."
         if context_songs:
             semantic_context = "Semantic Matches from our Library:\n"
             for s in context_songs:
                 semantic_context += f"- {s['title']} by {s['artist']} (Genre: {s.get('genre','N/A')})\n"
+
+        # 3. Handle Missing LLM (Graceful Degradation)
+        if not self.llm:
+            return {
+                "response": "AI generation is disabled (GEMINI_API_KEY missing), but here are some matches I found! 🔍",
+                "context_songs": context_songs
+            }
 
         # 3. LangChain Template: The "Generation" logic
         prompt = ChatPromptTemplate.from_messages([

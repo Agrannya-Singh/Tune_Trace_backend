@@ -40,6 +40,7 @@ class DiscoverSong(BaseModel):
 
 
 class DiscoverRequest(BaseModel):
+    user_id: str = Field(..., description="User ID for personalized context.")
     query: str = Field(
         ...,
         min_length=2,
@@ -53,11 +54,10 @@ class DiscoverRequest(BaseModel):
         le=30,
         description="Number of results to return (max 30).",
     )
-
-
-class DiscoverResponse(BaseModel):
-    query: str
-    results: List[DiscoverSong]
+    history: List[ChatMessage] = Field(
+        default_factory=list,
+        description="Optional conversation history for multi-turn discovery."
+    )
 
 
 class ChatMessage(BaseModel):
@@ -65,12 +65,10 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class ChatRequest(BaseModel):
-    user_id: str
-    message: str
-    history: List[ChatMessage] = []
-
-
-class ChatResponse(BaseModel):
-    response: str
-    context_songs: List[SongSuggestion]
+class DiscoverResponse(BaseModel):
+    query: str
+    results: List[DiscoverSong]
+    ai_response: Optional[str] = Field(
+        None, 
+        description="Conversational explanation or response from Gemini RAG pipeline."
+    )
