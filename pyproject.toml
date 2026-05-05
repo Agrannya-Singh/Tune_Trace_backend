@@ -7,11 +7,11 @@ authors = ["Agrannya Singh"]
 [tool.poetry.dependencies]
 python = "^3.11"
 fastapi = "^0.109.0"
-uvicorn = {extras = ["standard"], version = "^0.27.0"}
-gunicorn = "^21.2.0"
-sentence-transformers = "^2.3.1"
-google-generativeai = "^0.3.2"
-redis = "^5.0.1"
+uvicorn = {extras = ["standard"], version = ">=0.27,<0.47"}
+gunicorn = ">=21.2,<26.0"
+sentence-transformers = ">=2.3.1,<6.0.0"
+google-generativeai = ">=0.3.2,<0.9.0"
+redis = ">=5.0.1,<8.0.0"
 sqlalchemy = "^2.0.25"
 psycopg2-binary = "^2.9.9"
 alembic = "^1.13.1"
