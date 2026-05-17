@@ -137,6 +137,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/
@@ -206,3 +207,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Firebase Secrets
+*-service-account*.json
+firebase*.json
+serviceAccountKey.json
+*.pem

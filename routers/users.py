@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from repository import MusicRepository
 from api_models import LikedSongResponse
 from dependencies import get_repo
+from auth import get_current_user
 from utils.metrics import track_latency
 from redis_utils import redis_client
 
@@ -16,9 +17,21 @@ router = APIRouter(tags=["User Data"])
 @router.get("/liked-songs", response_model=List[LikedSongResponse])
 async def get_liked_songs(
     user_id: str = Query(..., max_length=255, min_length=1),
+    current_user: dict = Depends(get_current_user),
     repo: MusicRepository = Depends(get_repo),
 ):
     """Returns the list of liked songs for a given user."""
+    # Enforce token identity
+    if current_user and current_user.get("email"):
+        user_id = current_user["email"]
+    else:
+        if user_id != 'anon@use.com':
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthenticated request for registered user.")
+
+    # Set user context for RLS
+    if user_id != 'anon@use.com':
+        repo.set_app_user(user_id)
+
     try:
         if redis_client:
             with track_latency("Redis:Read"):

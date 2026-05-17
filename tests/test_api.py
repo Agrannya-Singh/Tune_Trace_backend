@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from main import app
 from dependencies import get_suggestion_service, get_repo
+from auth import get_current_user
 from unittest.mock import MagicMock, AsyncMock, patch
 
 @pytest.fixture
@@ -15,7 +16,7 @@ def test_health_check(client):
     assert response.json().get("status") == "healthy"
 
 @patch("routers.suggestions.YOUTUBE_API_KEY", "fake_key")
-def test_suggestions_valid_payload(mock_yt_key, client):
+def test_suggestions_valid_payload(client):
     # Mocking the service
     mock_service = MagicMock()
     # _search_youtube_for_song_async is async
@@ -37,6 +38,7 @@ def test_suggestions_valid_payload(mock_yt_key, client):
 
     app.dependency_overrides[get_suggestion_service] = lambda: mock_service
     app.dependency_overrides[get_repo] = lambda: mock_repo
+    app.dependency_overrides[get_current_user] = lambda: {"email": "test_user", "uid": "test_uid"}
     
     payload = {
         "user_id": "test_user",

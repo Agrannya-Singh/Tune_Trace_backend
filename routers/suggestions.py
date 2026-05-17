@@ -11,6 +11,7 @@ from services import SuggestionService
 from repository import MusicRepository
 from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion
 from dependencies import get_repo, get_suggestion_service
+from auth import get_current_user
 from utils.metrics import track_latency
 from config import YOUTUBE_API_KEY
 from redis_utils import redis_client
@@ -26,9 +27,18 @@ from engine import ml_engine
 async def post_suggestions(
     request: LikedSongsRequest,
     background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
     repo: MusicRepository = Depends(get_repo),
     suggestion_service: SuggestionService = Depends(get_suggestion_service),
 ):
+    # Enforce verified email if token is provided
+    if current_user and current_user.get("email"):
+        user_email = current_user.get("email")
+    else:
+        user_email = request.user_id
+        if user_email != 'anon@use.com':
+            # Prevent spoofing: if they claim an ID other than anon but have no valid token
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthenticated request for registered user.")
     if not YOUTUBE_API_KEY:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "Service is not configured.")
@@ -68,7 +78,7 @@ async def post_suggestions(
                     song_meta = repo.create_song_metadata(video_info)
                 song_metadata_ids_to_like.add(song_meta.id)
 
-        user = repo.get_or_create_user(request.user_id)
+        user = repo.get_or_create_user(user_email)
 
         # 3. Persist user likes
         with track_latency("PostgreSQL:Write_Likes"):
@@ -102,7 +112,6 @@ async def post_suggestions(
                 excluded_video_ids=previously_recommended,
             )
 
-        # 7. Fallback to genre-based search
         if not ai_suggestions:
             ai_suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
 
