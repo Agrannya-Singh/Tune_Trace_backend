@@ -1,0 +1,41 @@
+graph TB
+    subgraph UI ["Presentation Layer"]
+        FE[Next.js Web Client]
+    end
+
+    subgraph Ingress ["Logic Layer (Azure Web Apps)"]
+        API[FastAPI Backend Engine]
+    end
+
+    subgraph Pipeline ["Multimodal Embedding Ingestion"]
+        subgraph TextBranch ["Text Processing"]
+            MD[Song Metadata] --> CB[Context Builder]
+            CB --> TE[SentenceTransformer all-MiniLM-L6-v2]
+            TE --> TextSpace[384-d Text Embeddings]
+        end
+
+        subgraph AudioBranch ["Audio Signal Processing"]
+            RA[Raw Audio / Spectrograms] --> AE[Audio Transformer MERT / HuBERT]
+            AE --> PL[Dense Projection Layer]
+            PL --> AudioSpace[384-d Projected Audio Embeddings]
+        end
+    end
+
+    subgraph Storage ["Persistence & Performance Caching"]
+        Cache[(Redis Cache Cluster)]
+        subgraph DBCluster ["AI-Native DB (Supabase/AWS)"]
+            DB[(PostgreSQL Database)]
+            PGV[[pgvector Extension HNSW Index]]
+            DB <--> PGV
+        end
+    end
+
+    FE -->|1. Streaming Interaction Events| Cache
+    FE <-->|2. App State Requests| API
+    API -->|3. Asynchronous Log Flushing| DB
+    TextSpace -->|4a. Ingest Vector| DB
+    AudioSpace -->|4b. Ingest Vector| DB
+    Cache -.->|5. Real-Time Active Session History| API
+    API --->|6. HNSW Cosine Range Query 60/40 Split| PGV
+    PGV --->|7. Ranked Sequence Bundle| API
+    API --->|8. JSON Playback Stream| FE
