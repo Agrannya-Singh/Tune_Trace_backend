@@ -143,6 +143,8 @@ def run_janitor_backfill():
     Session = sessionmaker(bind=engine)
     session = Session()
 
+    from datetime import datetime
+    now = datetime.utcnow()
     logger.info("Preparing bulk insert mappings...")
     bulk_data = []
     for i in range(SAMPLE_SIZE):
@@ -155,13 +157,14 @@ def run_janitor_backfill():
             "genre": "YAMDA Mixed",
             "tags": "multimodal, audio-mapped",
             "enriched": "rosetta",
-            "embedding": vec_literal
+            "embedding": vec_literal,
+            "updated_at": now
         })
 
     logger.info(f"Executing bulk insert of {SAMPLE_SIZE} records...")
     insert_query = text('''
-        INSERT INTO public.song_metadata (video_id, title, artist, genre, tags, enriched, embedding)
-        VALUES (:video_id, :title, :artist, :genre, :tags, :enriched, :embedding)
+        INSERT INTO public.song_metadata (video_id, title, artist, genre, tags, enriched, embedding, updated_at)
+        VALUES (:video_id, :title, :artist, :genre, :tags, :enriched, :embedding, :updated_at)
         ON CONFLICT (video_id) DO NOTHING;
     ''')
     
