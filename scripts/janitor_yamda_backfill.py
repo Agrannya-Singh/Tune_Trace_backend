@@ -88,13 +88,17 @@ def run_janitor_backfill():
             if count >= SAMPLE_SIZE:
                 break
             
-            # Yambda embeddings parquet typically has 'item' (ID) and 'embedding' (vector)
             item_id = str(row.get("item", f"yamda_id_{count}"))
             mock_video_ids.append(item_id)
             mock_titles.append(f"Yambda Track {item_id}")
             mock_artists.append(f"Yambda Artist")
             
-            yamda_native_embeddings_list.append(row["embedding"]) 
+            # Dynamically find the embedding column
+            vec_col = next((col for col in ["embedding", "features", "audio_embedding", "vector"] if col in row), None)
+            if not vec_col:
+                raise ValueError(f"Could not find vector column in row. Keys found: {list(row.keys())}")
+                
+            yamda_native_embeddings_list.append(row[vec_col]) 
             count += 1
             
         yamda_native_embeddings = np.array(yamda_native_embeddings_list, dtype=np.float32)
@@ -108,7 +112,7 @@ def run_janitor_backfill():
         
     except Exception as e:
         logger.error(f"Failed to load Yambda dataset: {e}. Ensure 'datasets' is installed.")
-        return
+        sys.exit(1)
 
     # 2. Train/Load the Rosetta Stone Mapping Architecture
     logger.info("Initializing Rosetta Stone multimodal mapping (Audio -> Text Space)...")

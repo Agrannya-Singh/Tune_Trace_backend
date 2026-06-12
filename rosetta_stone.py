@@ -49,7 +49,7 @@ class RosettaStoneMapper(nn.Module):
 
     def forward(self, x):
         """
-        Project YAMDA audio embeddings into the MiniLM text space.
+        Project MiniLM embeddings into YAMDA space.
         Optionally L2-normalize if the target space requires cosine similarity.
         """
         out = self.network(x)
@@ -57,8 +57,8 @@ class RosettaStoneMapper(nn.Module):
         return out
 
 def train_rosetta_stone(
-    minilm_data: np.ndarray, 
     yamda_data: np.ndarray, 
+    minilm_data: np.ndarray, 
     epochs: int = 20, 
     batch_size: int = 64, 
     lr: float = 1e-3,
