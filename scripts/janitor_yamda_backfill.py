@@ -20,6 +20,45 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # Default to 100k for the Nano Supabase constraint
 SAMPLE_SIZE = int(os.getenv("SAMPLE_SIZE", "100000"))  
 
+from typing import Literal
+
+class YambdaDataset:
+    INTERACTIONS = frozenset([
+        "likes", "listens", "multi_event", "dislikes", "unlikes", "undislikes"
+    ])
+
+    def __init__(
+        self,
+        dataset_type: Literal["flat", "sequential"] = "flat",
+        dataset_size: Literal["50m", "500m", "5b"] = "50m"
+    ):
+        assert dataset_type in {"flat", "sequential"}
+        assert dataset_size in {"50m", "500m", "5b"}
+        self.dataset_type = dataset_type
+        self.dataset_size = dataset_size
+
+    def interaction(self, event_type: Literal[
+        "likes", "listens", "multi_event", "dislikes", "unlikes", "undislikes"
+    ]):
+        assert event_type in YambdaDataset.INTERACTIONS
+        return self._download(f"{self.dataset_type}/{self.dataset_size}", event_type)
+
+    def audio_embeddings(self):
+        return self._download("", "embeddings")
+
+    def album_item_mapping(self):
+        return self._download("", "album_item_mapping")
+
+    def artist_item_mapping(self):
+        return self._download("", "artist_item_mapping")
+
+    @staticmethod
+    def _download(data_dir: str, file: str):
+        from datasets import load_dataset
+        # We explicitly set streaming=True so GitHub Actions doesn't download the massive 50GB file to disk
+        data = load_dataset("yandex/yambda", data_dir=data_dir, data_files=f"{file}.parquet", streaming=True)
+        return data["train"]
+
 def run_janitor_backfill():
     if not DATABASE_URL:
         logger.error("DATABASE_URL environment variable is missing. Aborting.")
@@ -28,15 +67,48 @@ def run_janitor_backfill():
     logger.info(f"Starting YAMDA Janitor Backfill for {SAMPLE_SIZE} tracks...")
     start_time = time.time()
 
-    # 1. Download / Generate the 100k YAMDA Subset
-    logger.info("Downloading YAMDA-100k variant dataset...")
-    # Mock the dataset generation
-    mock_video_ids = [f"yamda_{i}" for i in range(SAMPLE_SIZE)]
-    mock_titles = [f"YAMDA Track {i}" for i in range(SAMPLE_SIZE)]
-    mock_artists = [f"YAMDA Artist {i%500}" for i in range(SAMPLE_SIZE)]
-    
-    yamda_native_embeddings = np.random.randn(SAMPLE_SIZE, 512).astype(np.float32)
-    minilm_embeddings = np.random.randn(SAMPLE_SIZE, 384).astype(np.float32)
+    # 1. Download the Real 100k YAMDA Subset via HuggingFace
+    logger.info("Downloading actual Yambda-50M variant dataset from HuggingFace...")
+    try:
+        yambda_loader = YambdaDataset("flat", "50m")
+        embeddings_dataset = yambda_loader.audio_embeddings()
+        
+        mock_video_ids = []
+        mock_titles = []
+        mock_artists = []
+        yamda_native_embeddings_list = []
+        
+        # We also need the original text representations to compute the MiniLM targets
+        from sentence_transformers import SentenceTransformer
+        encoder = SentenceTransformer("all-MiniLM-L6-v2")
+        
+        logger.info(f"Extracting first {SAMPLE_SIZE} records from Yambda dataset...")
+        count = 0
+        for row in embeddings_dataset:
+            if count >= SAMPLE_SIZE:
+                break
+            
+            # Yambda embeddings parquet typically has 'item' (ID) and 'embedding' (vector)
+            item_id = str(row.get("item", f"yamda_id_{count}"))
+            mock_video_ids.append(item_id)
+            mock_titles.append(f"Yambda Track {item_id}")
+            mock_artists.append(f"Yambda Artist")
+            
+            yamda_native_embeddings_list.append(row["embedding"]) 
+            count += 1
+            
+        yamda_native_embeddings = np.array(yamda_native_embeddings_list, dtype=np.float32)
+        # We ONLY need MiniLM target embeddings for the Rosetta Stone training subset (e.g., 5000)
+        # NOT the entire 100k dataset. The rest will just be projected by the trained model.
+        training_subset_size = 5000
+        text_contexts = [f"{mock_titles[i]} by {mock_artists[i]}" for i in range(training_subset_size)]
+        
+        logger.info(f"Computing MiniLM target embeddings for only the {training_subset_size} training tracks...")
+        minilm_embeddings = encoder.encode(text_contexts, show_progress_bar=False, normalize_embeddings=True)
+        
+    except Exception as e:
+        logger.error(f"Failed to load Yambda dataset: {e}. Ensure 'datasets' is installed.")
+        return
 
     # 2. Train/Load the Rosetta Stone Mapping Architecture
     logger.info("Initializing Rosetta Stone multimodal mapping (Audio -> Text Space)...")
