@@ -49,7 +49,7 @@ class RosettaStoneMapper(nn.Module):
 
     def forward(self, x):
         """
-        Project MiniLM embeddings into YAMDA space.
+        Project YAMDA audio embeddings into the MiniLM text space.
         Optionally L2-normalize if the target space requires cosine similarity.
         """
         out = self.network(x)
@@ -67,11 +67,12 @@ def train_rosetta_stone(
     """
     Train the Rosetta Stone mapping architecture.
     """
+    # Note: YamdaDataset yields (minilm, yamda), we just extract them in the loop.
     dataset = YamdaDataset(minilm_data, yamda_data)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
-    input_dim = minilm_data.shape[1]
-    output_dim = yamda_data.shape[1]
+    input_dim = yamda_data.shape[1]   # e.g., 500 or 512
+    output_dim = minilm_data.shape[1] # 384
     
     model = RosettaStoneMapper(input_dim=input_dim, output_dim=output_dim).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -79,7 +80,7 @@ def train_rosetta_stone(
     criterion = nn.CosineEmbeddingLoss()
     target_tensor = torch.ones(batch_size).to(device)
     
-    logger.info(f"Starting Rosetta Stone training mapping {input_dim}-d -> {output_dim}-d")
+    logger.info(f"Starting Rosetta Stone training mapping YAMDA({input_dim}-d) -> MiniLM({output_dim}-d)")
     model.train()
     
     for epoch in range(epochs):
@@ -88,13 +89,14 @@ def train_rosetta_stone(
             batch_minilm = batch_minilm.to(device)
             batch_yamda = batch_yamda.to(device)
             
-            current_batch_size = batch_minilm.size(0)
+            current_batch_size = batch_yamda.size(0)
             batch_target = target_tensor[:current_batch_size]
 
             optimizer.zero_grad()
-            pred_yamda = model(batch_minilm)
+            # Predict the MiniLM embedding from the YAMDA embedding
+            pred_minilm = model(batch_yamda)
             
-            loss = criterion(pred_yamda, batch_yamda, batch_target)
+            loss = criterion(pred_minilm, batch_minilm, batch_target)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
