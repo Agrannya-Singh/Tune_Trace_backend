@@ -139,7 +139,11 @@ def run_janitor_backfill():
 
     # 4. Ingest into Supabase via SQLAlchemy
     logger.info("Connecting to Supabase PostgreSQL database...")
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(
+        DATABASE_URL,
+        executemany_mode='values',
+        executemany_values_page_size=2000
+    )
     Session = sessionmaker(bind=engine)
     session = Session()
 
@@ -168,7 +172,7 @@ def run_janitor_backfill():
         ON CONFLICT (video_id) DO NOTHING;
     ''')
     
-    chunk_size = 10000
+    chunk_size = 2000
     for i in range(0, len(bulk_data), chunk_size):
         chunk = bulk_data[i:i+chunk_size]
         session.execute(insert_query, chunk)
