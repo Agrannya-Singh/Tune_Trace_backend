@@ -88,13 +88,13 @@ def run_janitor_backfill():
             if count >= SAMPLE_SIZE:
                 break
             
-            item_id = str(row.get("item", f"yamda_id_{count}"))
+            item_id = str(row.get("item_id", row.get("item", f"yamda_id_{count}")))
             mock_video_ids.append(item_id)
             mock_titles.append(f"Yambda Track {item_id}")
             mock_artists.append(f"Yambda Artist")
             
-            # Dynamically find the embedding column
-            vec_col = next((col for col in ["embedding", "features", "audio_embedding", "vector"] if col in row), None)
+            # Dynamically find the embedding column, prioritizing normalized_embed
+            vec_col = next((col for col in ["normalized_embed", "embed", "embedding", "features", "audio_embedding", "vector"] if col in row), None)
             if not vec_col:
                 raise ValueError(f"Could not find vector column in row. Keys found: {list(row.keys())}")
                 
