@@ -167,7 +167,7 @@ if __name__ == "__main__":
     mock_yamda /= np.linalg.norm(mock_yamda, axis=1, keepdims=True)
     
     print(f"Training Rosetta Stone architecture on {DEVICE} for multimodal integration...")
-    trained_model = train_rosetta_stone(mock_yamda, mock_minilm, epochs=5)
+    trained_model = train_rosetta_stone(minilm_data=mock_minilm, yamda_data=mock_yamda, epochs=5)
     
     print("Training complete! Testing save/load utility...")
     import tempfile

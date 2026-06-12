@@ -2,9 +2,10 @@ import os
 import sys
 import logging
 import time
+from urllib.parse import urlparse
 import numpy as np
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+import psycopg2
+import psycopg2.extras
 
 # Ensure local imports work by adding the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -137,51 +138,48 @@ def run_janitor_backfill():
             
         final_shared_embeddings = np.concatenate(projected_embeddings, axis=0)
 
-    # 4. Ingest into Supabase via SQLAlchemy
+    # 4. Ingest into Supabase using psycopg2 directly with execute_values
+    # This is far faster than SQLAlchemy for bulk inserts — single network roundtrip per chunk.
     logger.info("Connecting to Supabase PostgreSQL database...")
-    engine = create_engine(
-        DATABASE_URL,
-        executemany_mode='values',
-        executemany_values_page_size=2000
-    )
-    Session = sessionmaker(bind=engine)
-    session = Session()
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    cur = conn.cursor()
 
-    from datetime import datetime
-    now = datetime.utcnow()
-    logger.info("Preparing bulk insert mappings...")
-    bulk_data = []
-    for i in range(SAMPLE_SIZE):
-        vec_literal = MLEngine.vector_to_literal(final_shared_embeddings[i])
-        
-        bulk_data.append({
-            "video_id": mock_video_ids[i],
-            "title": mock_titles[i],
-            "artist": mock_artists[i],
-            "genre": "YAMDA Mixed",
-            "tags": "multimodal, audio-mapped",
-            "enriched": "rosetta",
-            "embedding": vec_literal,
-            "updated_at": now
-        })
+    logger.info("Preparing bulk insert tuples...")
+    # Build list of tuples matching the INSERT column order
+    bulk_tuples = [
+        (
+            mock_video_ids[i],
+            mock_titles[i],
+            mock_artists[i],
+            "YAMDA Mixed",
+            "multimodal, audio-mapped",
+            "rosetta",
+            "[" + ",".join(f"{float(x):.6f}" for x in final_shared_embeddings[i]) + "]",
+        )
+        for i in range(len(mock_video_ids))
+    ]
 
-    logger.info(f"Executing bulk insert of {SAMPLE_SIZE} records...")
-    insert_query = text('''
-        INSERT INTO public.song_metadata (video_id, title, artist, genre, tags, enriched, embedding, updated_at)
-        VALUES (:video_id, :title, :artist, :genre, :tags, :enriched, :embedding, :updated_at)
+    INSERT_SQL = """
+        INSERT INTO public.song_metadata (video_id, title, artist, genre, tags, enriched, embedding)
+        VALUES %s
         ON CONFLICT (video_id) DO NOTHING;
-    ''')
-    
-    chunk_size = 2000
-    for i in range(0, len(bulk_data), chunk_size):
-        chunk = bulk_data[i:i+chunk_size]
-        session.execute(insert_query, chunk)
-        session.commit()
-        logger.info(f"Inserted chunk {i//chunk_size + 1}/{(len(bulk_data)//chunk_size) + 1}")
+    """
 
-    session.close()
+    chunk_size = 1000
+    total_chunks = (len(bulk_tuples) + chunk_size - 1) // chunk_size
+    logger.info(f"Executing bulk insert of {len(bulk_tuples)} records in {total_chunks} chunks of {chunk_size}...")
+
+    for i in range(0, len(bulk_tuples), chunk_size):
+        chunk = bulk_tuples[i:i + chunk_size]
+        psycopg2.extras.execute_values(cur, INSERT_SQL, chunk, page_size=chunk_size)
+        conn.commit()
+        logger.info(f"Inserted chunk {i // chunk_size + 1}/{total_chunks}")
+
+    cur.close()
+    conn.close()
     elapsed = time.time() - start_time
-    logger.info(f"✅ YAMDA 100k Backfill and Rosetta Projection completed in {elapsed:.2f} seconds.")
+    logger.info(f"✅ YAMDA Backfill and Rosetta Projection completed in {elapsed:.2f} seconds.")
 
 if __name__ == "__main__":
     run_janitor_backfill()
