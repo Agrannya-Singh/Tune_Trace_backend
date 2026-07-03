@@ -1,8 +1,8 @@
 import sys
 import os
 
-# Add the project root to sys.path so we can import modules
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+# Add the project root (parent of scripts/) to sys.path so we can import modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.enrichment import _extract_genre_from_tags
 from ml_engine import MLEngine
@@ -10,11 +10,9 @@ from ml_engine import MLEngine
 
 def run_demo():
     print("==========================================================")
-    print("   Tag Extraction & TF-IDF Feature Construction Demo")
+    print("   Tag Extraction & Semantic Feature Construction Demo")
     print("==========================================================")
     
-    engine = MLEngine()
-
     samples = [
         {
             "id": "1",
@@ -68,12 +66,13 @@ def run_demo():
             "video_id": sample['id']
         }
         
-        # This is what TF-IDF sees
-        feature_text = engine._build_feature_text(song_dict)
+        # This is what the SentenceTransformer encoder sees
+        feature_text = MLEngine.build_text_context(song_dict)
         
-        print("3. Final ML TF-IDF Text:")
+        print("3. Final Semantic Context Text:")
         print(f"   => {feature_text}")
 
 
 if __name__ == "__main__":
     run_demo()
+

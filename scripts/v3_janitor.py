@@ -18,8 +18,8 @@ import time
 
 from dotenv import load_dotenv
 
-# Add project root to path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+# Add project root (parent of scripts/) to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import text

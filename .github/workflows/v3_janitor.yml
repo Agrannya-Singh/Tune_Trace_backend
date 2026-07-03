@@ -1,4 +1,4 @@
-name: Run V3 Janitor Backfill
+name: V3 Embedding Backfill
 
 on:
   schedule:
@@ -7,30 +7,37 @@ on:
   workflow_dispatch:
     # Allow manual triggering from the GitHub Actions tab
 
+permissions:
+  contents: read
+
 jobs:
   run-janitor:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
-      - name: Install DB Dependencies
+
+      - name: Cache HuggingFace model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-${{ runner.os }}
+          restore-keys: |
+            hf-all-MiniLM-L6-v2-
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install alembic sqlalchemy psycopg2-binary pgvector python-dotenv
-          
-      - name: Install ML Dependencies
-        run: |
-          pip install --extra-index-url https://download.pytorch.org/whl/cpu torch sentence-transformers
-          
-      - name: Run Janitor Script
+          pip install -r requirements.txt
+
+      - name: Run V3 Janitor Script
         env:
           POSTGRES_DATABASE_URL: ${{ secrets.POSTGRES_DATABASE_URL }}
         run: |
-          python v3_janitor.py
+          python scripts/v3_janitor.py
