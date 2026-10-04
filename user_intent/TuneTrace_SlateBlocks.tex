@@ -1,0 +1,203 @@
+% =============================================================================
+% slate-blocks — skeleton.
+% =============================================================================
+\documentclass[xcolor=dvipsnames, aspectratio=1610]{beamer}
+
+\usetheme{Madrid}
+\useoutertheme{miniframes}
+\useinnertheme{circles}
+
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+
+\input{style}
+
+% The watermark: the cover photograph on every slide at 6.7%. Comment out to
+% drop it.
+\slateWatermark{figures/background.png}
+
+% --- the title page's five fields ---------------------------------------------
+\renewcommand{\slateTitle}    {\large\textbf{\textrm{TuneTrace: Semantic Music Recommendation}}}
+\renewcommand{\slateSubTitle} {\small\textrm{Intent Modeling \& Microservice Architecture}}
+\renewcommand{\slateAuthor}   {Agrannya Singh (23BCE0965)}
+\renewcommand{\slateAffiliate}{VIT Vellore — Samsung PRISM (SRI-B) Phase 2}
+
+% --- and beamer's own, for the footer and the navigation row ------------------
+\title[TuneTrace]{TuneTrace: Semantic Music Recommendation}
+\subtitle{Intent Modeling \& Microservice Architecture}
+\author[A. Singh]{Agrannya Singh}
+\institute[VIT]{VIT Vellore}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \slatetitlepage
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{Executive Summary}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{Executive Summary}}
+
+  TuneTrace is an AI-powered music recommendation microservice and intent-state modeling engine developed for the Samsung PRISM (SRI-B) Phase 2 sandbox.
+
+  \vspace{5mm}
+  \swot
+    {\scriptsize \textbf{Strengths:} \\ Multi-tier deterministic fallback guarantees a 100\% ``never-empty'' response rate.}
+    {\scriptsize \textbf{Weaknesses Solved:} \\ Traditional collaborative filtering fails on cold starts and rapid intra-session intent shifts.}
+    {\scriptsize \textbf{Opportunities:} \\ Deep sequential tracking via PyTorch GRU v3 Heavy across 50M records (YAMDA).}
+    {\scriptsize \textbf{Threats Mitigated:} \\ Azure B1 Tier resource constraints (1.75 GB RAM limits) bypassed via baked-in CI/CD weights.}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{System Overview}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{System Overview \& Core Objectives}}
+
+  \begin{itemize}
+    \item \textbf{Rapid Intent Adaptation:} Addressing the research gap where recommendation systems fail to adapt to shifting user intents.
+    \item \textbf{Mitigating Cold Starts:} Bypassing traditional interaction matrices through dense semantic \texttt{all-MiniLM-L6-v2} vectors.
+    \item \textbf{High Availability:} Utilizing deterministic fallbacks to provide valid content regardless of backend catalogue state.
+  \end{itemize}
+
+  \vspace{2.5mm}
+  \begin{ExampleBox}
+    \textbf{Core Technical Stack}
+    \begin{itemize}
+      \item \textbf{Vector Search:} \texttt{pgvector} (PostgreSQL) and FAISS (HNSW Indexing)
+      \item \textbf{Deep Learning:} PyTorch GRU Sequential Recommender
+      \item \textbf{Data Processing:} DuckDB (ETL) and SQLite (Catalog routing)
+      \item \textbf{Deployment:} FastAPI on Azure App Service (B1 Tier) with Redis caching
+    \end{itemize}
+  \end{ExampleBox}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{Recommendation Pipeline}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{Recommendation Pipeline (Version 3.0)}}
+
+  \begin{itemize}
+    \item \textbf{Vectorization:} Tracks (titles, artists, genres, tags) are encoded into 384-dimensional dense vectors.
+    \item \textbf{Recency Decay:} A temporal exponential-decay strategy ($\lambda=1.0$) ensures recent interactions dominate the user's profile vector.
+    \item \textbf{Similarity Metric:} Cosine Distance identifies nearest neighbors within the latent space.
+  \end{itemize}
+
+  \vspace{2.5mm}
+  \begin{columns}[T]
+    \begin{column}{0.48\linewidth}
+      \begin{ProposalBox}
+        \textbf{Diversity Injection (Active)} \\
+        Performs weighted random sampling from the top 50 semantic matches, mixing high-confidence tracks with ``discovery'' tracks to break algorithmic echo chambers.
+      \end{ProposalBox}
+    \end{column}
+    \begin{column}{0.48\linewidth}
+      \begin{CommentBox}
+        \textbf{Repetition Exclusion (Active)} \\
+        A Redis-backed filter caches recent recommendations. Songs are explicitly excluded if they were suggested to the same user within the last 24 hours.
+      \end{CommentBox}
+    \end{column}
+  \end{columns}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{Resilience Hierarchy}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{Resilience and Fallback Hierarchy}}
+
+  To maintain absolute reliability and a ``never-empty'' response, TuneTrace triggers a deterministic four-tier fallback chain during retrieval.
+
+  \vspace{2.5mm}
+  \begin{itemize}
+    \item \textbf{Tier 1: Semantic Match.} Preferred method; utilizes 384-dim vector similarity against the user's active intent profile.
+    \item \textbf{Tier 2: Metadata Heuristic.} Triggered if vector search yields zero results; falls back to matching specific genre tags locally.
+    \item \textbf{Tier 3: Genre Trending.} Queries the YouTube Data API for live top-performing tracks in the user's preferred genre.
+    \item \textbf{Tier 4: Global Trending.} Ultimate fallback; retrieves top global charts to absolutely guarantee content delivery.
+  \end{itemize}
+
+  \vspace{2.5mm}
+  \begin{CommentBox}
+    Collaborative filtering logic is currently implemented but disabled via a feature flag to prioritize semantic accuracy and reduce computational overhead on the Azure B1 Tier.
+  \end{CommentBox}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{Intent Modeling}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{Intent State Modeling: ETL Stack}}
+
+  Designed specifically for the Samsung PRISM Sandbox to model user intent via sequence tracking.
+
+  \vspace{2.5mm}
+  \begin{itemize}
+    \item \textbf{Data Ingestion:} Scans local paths for YAMDA-50M parquets (with a streaming Hugging Face fallback).
+    \item \textbf{Processing:} DuckDB executes streaming chunk ingestion (8 GB memory cap), handling high-speed joins and sequence grouping directly on-disk.
+    \item \textbf{Database Schema:} Managed via SQLite across three core relations: \texttt{tracks}, \texttt{user\_histories} (recording explicit intent states), and \texttt{recommendations}.
+  \end{itemize}
+
+  \vspace{2.5mm}
+  \begin{columns}[T]
+    \begin{column}{0.48\linewidth}
+      \begin{ExampleBox}
+        \textbf{FAISS (IVFPQ) Indexing} \\
+        Utilises Product-Quantization compressed indices for ultra-fast ANN search, achieving roughly a 90\% RAM reduction.
+      \end{ExampleBox}
+    \end{column}
+    \begin{column}{0.48\linewidth}
+      \begin{CommentBox}
+        \textbf{Pipeline Performance} \\
+        DuckDB successfully loaded 427 test users and 156,275 tracks into the database in under two minutes.
+      \end{CommentBox}
+    \end{column}
+  \end{columns}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{Sequential Deep Learning}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{Sequential Recommender Architecture}}
+
+  The offline sandbox directly evaluates a heuristic temporal decay engine against our custom sequence-learning model.
+
+  \vspace{2.5mm}
+  \begin{ProposalBox}
+    \textbf{PyTorch GRU Recommender (v3 Heavy)}
+    \begin{itemize}
+      \item \textbf{Architecture:} 4-layer GRU backbone scaled to a 512 hidden dimension to accommodate the 50M-interaction YAMDA dataset scale.
+      \item \textbf{Attention:} Incorporates 4-head self-attention pooling over all time-steps, feeding into a 4-layer MLP projection head (GELU + LayerNorm).
+      \item \textbf{Loss Function:} Contrastive InfoNCE loss pulls target items and pushes in-batch negative sampling.
+      \item \textbf{Training Scale:} Scaled to a 60-epoch target (with a sequence length of 20) via a multi-session Kaggle checkpointing auto-resume mechanism.
+    \end{itemize}
+  \end{ProposalBox}
+
+\end{frame}
+
+% -----------------------------------------------------------------------------
+\section{\textsc{API Architecture}}
+% -----------------------------------------------------------------------------
+\begin{frame}{\textsc{API Architecture and Deployment}}
+
+  \begin{itemize}
+    \item \textbf{\texttt{POST /suggestions}:} Receives \texttt{user\_id}, a list of songs, and a genre. Returns AI-powered sequential suggestions.
+    \item \textbf{\texttt{POST /discover}:} Facilitates semantic discovery via free-text queries (e.g., \textit{``late night driving music with heavy bass''}).
+  \end{itemize}
+
+  \vspace{2.5mm}
+  \begin{ExampleBox}
+    \textbf{Optimisation for Azure B1 Tier (1.75 GB RAM Constraint)}
+    \begin{itemize}
+      \item \textbf{Baked-in Models:} \texttt{all-MiniLM-L6-v2} weights are downloaded during CI/CD and baked directly into the Docker image, eliminating network-bound cold-start timeouts.
+      \item \textbf{Worker Configuration:} Uses precisely two Gunicorn workers with a 90-second timeout to balance memory saturation.
+      \item \textbf{Cold Startup Time:} The FastAPI server initializes in roughly 2–4 minutes from a completely cold boot.
+    \end{itemize}
+  \end{ExampleBox}
+
+\end{frame}
+
+\end{document}

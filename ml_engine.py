@@ -10,7 +10,7 @@ Replaces the legacy TF-IDF engine with:
 """
 
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 import os
 import numpy as np
@@ -91,12 +91,33 @@ class MLEngine:
         if not user_history:
             return np.zeros(EMBEDDING_DIM)
 
-        user_texts = [self.build_text_context(s) for s in user_history]
-        user_vectors = self.encode(user_texts)  # (N, 384)
+        vectors = []
+        texts_to_encode = []
+        indices_to_encode = []
+
+        # 1. Reuse existing embeddings where available
+        for i, song in enumerate(user_history):
+            emb = song.get("embedding")
+            if emb is not None:
+                vectors.append(np.array(emb, dtype=np.float32))
+            else:
+                vectors.append(None)
+                texts_to_encode.append(self.build_text_context(song))
+                indices_to_encode.append(i)
+                
+        # 2. Compute missing embeddings in one batch
+        if texts_to_encode:
+            new_embeddings = self.encode(texts_to_encode)
+            for i, idx in enumerate(indices_to_encode):
+                vectors[idx] = new_embeddings[i]
+                
+        user_vectors = np.stack(vectors) # (N, 384)
 
         n = len(user_vectors)
         if n > 1:
-            decay = np.exp(-np.linspace(0, 1, n))
+            # Half-life = 20
+            indices = np.arange(n)
+            decay = np.exp(-indices * np.log(2) / 20)
             weights = (decay / decay.sum()).reshape(-1, 1)
             profile_vector = (user_vectors * weights).sum(axis=0)
         else:

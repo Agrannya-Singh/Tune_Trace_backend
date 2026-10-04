@@ -4,7 +4,7 @@ SQLAlchemy ORM models for the TuneTrace backend.
 """
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Set
 
 from sqlalchemy import (
@@ -52,18 +52,16 @@ class User(Base):
         comment="User's email address from OAuth provider."
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
     likes: Mapped[List[UserLikedSong]] = relationship(
         "UserLikedSong", back_populates="user", cascade="all, delete-orphan"
     )
 
-    def get_liked_song_ids(self) -> Set[int]:
-        """Returns a set of internal DB IDs of songs liked by the user."""
-        return {like.song_id for like in self.likes}
+
 
 
 class SongMetadata(Base):
@@ -100,7 +98,7 @@ class SongMetadata(Base):
         comment="384-d semantic embedding from all-MiniLM-L6-v2"
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
     )
 
     def to_dict(self) -> dict:
@@ -134,7 +132,7 @@ class UserLikedSong(Base):
         ForeignKey("song_metadata.id", ondelete="CASCADE")
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+        DateTime, default=lambda: datetime.now(timezone.utc)
     )
     user: Mapped[User] = relationship("User", back_populates="likes")
     song: Mapped[SongMetadata] = relationship("SongMetadata")

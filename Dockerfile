@@ -31,9 +31,17 @@ ENV MODEL_PATH=/app/models/all-MiniLM-L6-v2
 # 
 COPY . .
 
-# 7. Final preparation
+# 7. Add non-root user and set permissions
+RUN useradd --create-home appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# 8. Final preparation
 RUN chmod +x startup.sh
 EXPOSE 8000
 
-# 8. Entry point
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# 9. Entry point
 ENTRYPOINT ["./startup.sh"]

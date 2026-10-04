@@ -1,0 +1,45 @@
+\frametitle{Work Done: Production FastAPI Service}\framesubtitle {Real-time lifecycle \& verified JSON contract}
+    \begin{columns}[T]
+        \begin{column}{0.48\textwidth}
+            \begin{block}{Verified Request: \texttt{POST /suggestions}}
+                \fontsize{6pt}{7.5pt}\selectfont\ttfamily
+                \{\\
+                \quad "user\_id": "user@example.com",\\
+                \quad "songs": ["Shape of You - Ed Sheeran"],\\
+                \quad "genre": "Pop"\\
+                \}
+            \end{block}
+
+            \begin{block}{Execution Lifecycle}
+                \begin{enumerate}\fontsize{6pt}{8pt}\selectfont
+                    \item JWT Authentication (\texttt{get\_current\_user}).
+                    \item In-memory profile calculation ($<1.2\text{ ms}$).
+                    \item \texttt{pgvector} Cosine distance lookup ($<45\text{ ms}$).
+                    \item Redis 24hr deduplication filter.
+                    \item Background task logging to PostgreSQL.
+                \end{enumerate}
+            \end{block}
+        \end{column}
+
+        \begin{column}{0.48\textwidth}
+            \begin{block}{Verified Response Payload}
+                \fontsize{6pt}{7.5pt}\selectfont\ttfamily
+                \{\\
+                \quad "status": "success",\\
+                \quad "source": "semantic\_search",\\
+                \quad "results": [\\
+                \quad\quad \{\\
+                \quad\quad\quad "title": "Perfect",\\
+                \quad\quad\quad "artist": "Ed Sheeran",\\
+                \quad\quad\quad "score": 0.89\\
+                \quad\quad \},\\
+                \quad\quad \{\\
+                \quad\quad\quad "title": "Someone You Loved",\\
+                \quad\quad\quad "artist": "Lewis Capaldi",\\
+                \quad\quad\quad "score": 0.85\\
+                \quad\quad \}\\
+                \quad ]\\
+                \}
+            \end{block}
+        \end{column}
+    \end{columns}

@@ -15,22 +15,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["User Data"])
 
 @router.get("/liked-songs", response_model=List[LikedSongResponse])
-async def get_liked_songs(
+def get_liked_songs(
     user_id: str = Query(..., max_length=255, min_length=1),
     current_user: dict = Depends(get_current_user),
     repo: MusicRepository = Depends(get_repo),
 ):
     """Returns the list of liked songs for a given user."""
-    # Enforce token identity
+    # Enforce token identity and email verification
     if current_user and current_user.get("email"):
+        if not current_user.get("email_verified"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Email not verified.")
         user_id = current_user["email"]
     else:
         if user_id != 'anon@use.com':
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthenticated request for registered user.")
-
-    # Set user context for RLS
-    if user_id != 'anon@use.com':
-        repo.set_app_user(user_id)
 
     try:
         if redis_client:

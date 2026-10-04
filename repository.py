@@ -1,7 +1,6 @@
 # repository.py
 
 from typing import List, Optional, Set
-import logging
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, text
@@ -96,83 +95,11 @@ class MusicRepository:
             .join(UserLikedSong, UserLikedSong.song_id == SongMetadata.id)
             .join(User, User.id == UserLikedSong.user_id)
             .filter(User.user_id == user_id)
+            .order_by(UserLikedSong.created_at.desc())
+            .limit(200)
             .all()
         )
 
-    def get_candidate_songs(self, exclude_song_ids: Optional[Set[int]] = None, limit: int = 1000) -> List[SongMetadata]:
-        """Returns candidate songs ordered by metadata richness for best TF-IDF quality.
-
-        Priority:
-          1. Songs with both genre AND tags populated  (richest vectors)
-          2. Songs with genre only
-          3. Remaining songs (title/artist only)
-        Within each tier, most-recently-updated songs appear first.
-        """
-        query = self.db.query(SongMetadata)
-        if exclude_song_ids:
-            query = query.filter(~SongMetadata.id.in_(exclude_song_ids))
-        return (
-            query
-            .order_by(
-                # Richest metadata first: both genre and tags present
-                (
-                    (SongMetadata.genre.isnot(None)) &
-                    (SongMetadata.genre != "") &
-                    (SongMetadata.tags.isnot(None)) &
-                    (SongMetadata.tags != "")
-                ).desc(),
-                # Second tier: genre present
-                (
-                    (SongMetadata.genre.isnot(None)) &
-                    (SongMetadata.genre != "")
-                ).desc(),
-                SongMetadata.updated_at.desc(),
-            )
-            .limit(limit)
-            .all()
-        )
-
-
-    def get_collaborative_suggestions(self, user: User, limit: int = 10) -> List[SongMetadata]:
-        """Get song suggestions based on collaborative filtering.
-
-        Finds songs liked by users with similar taste (users who liked the same songs).
-        """
-        if not user.likes:
-            return []
-
-        # Get songs liked by this user
-        user_liked_song_ids = user.get_liked_song_ids()
-
-        # Find other users who liked the same songs
-        similar_users = (
-            self.db.query(User.id)
-            .join(UserLikedSong)
-            .filter(UserLikedSong.song_id.in_(user_liked_song_ids))
-            .filter(User.id != user.id)
-            .group_by(User.id)
-            .having(func.count(UserLikedSong.song_id) >= 2)  # At least 2 songs in common
-            .all()
-        )
-
-        if not similar_users:
-            return []
-
-        similar_user_ids = [u[0] for u in similar_users]
-
-        # Get songs liked by similar users that the current user hasn't liked
-        recommendations = (
-            self.db.query(SongMetadata)
-            .join(UserLikedSong)
-            .filter(UserLikedSong.user_id.in_(similar_user_ids))
-            .filter(~SongMetadata.id.in_(user_liked_song_ids))
-            .group_by(SongMetadata.id)
-            .order_by(func.count(UserLikedSong.user_id).desc())  # Most popular among similar users
-            .limit(limit)
-            .all()
-        )
-
-        return recommendations
 
     def get_songs_by_ids(self, song_ids: List[int]) -> List[SongMetadata]:
         """Returns a list of SongMetadata objects for the given IDs."""
@@ -183,6 +110,7 @@ class MusicRepository:
         Executes pgvector cosine similarity search.
         Returns a list of tuples containing (video_id, title, artist, genre, tags, enriched, similarity).
         """
+        self.db.execute(text("SET LOCAL hnsw.ef_search = 100"))
         if exclude_video_ids:
             placeholders = ", ".join(f":exc_{i}" for i in range(len(exclude_video_ids)))
             sql = text(f"""

@@ -2,11 +2,9 @@
 import asyncio
 import json
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
 from typing import Set
 
-from db import get_session
-from ml_engine import MLEngine
 from services import SuggestionService
 from repository import MusicRepository
 from api_models import SuggestionResponse, LikedSongsRequest, SongSuggestion
@@ -16,16 +14,19 @@ from utils.metrics import track_latency
 from config import YOUTUBE_API_KEY
 from redis_utils import redis_client
 from tasks import update_redis_user_likes
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Suggestions"])
 
-# Shared ML engine
-from engine import ml_engine
-
 @router.post("/suggestions", response_model=SuggestionResponse)
+@limiter.limit("10/minute", exempt_when=lambda: False)
 async def post_suggestions(
-    request: LikedSongsRequest,
+    request: Request,
+    payload: LikedSongsRequest,
     background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     repo: MusicRepository = Depends(get_repo),
@@ -33,9 +34,11 @@ async def post_suggestions(
 ):
     # Enforce verified email if token is provided
     if current_user and current_user.get("email"):
+        if not current_user.get("email_verified"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Email not verified.")
         user_email = current_user.get("email")
     else:
-        user_email = request.user_id
+        user_email = payload.user_id
         if user_email != 'anon@use.com':
             # Prevent spoofing: if they claim an ID other than anon but have no valid token
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthenticated request for registered user.")
@@ -48,7 +51,7 @@ async def post_suggestions(
         song_metadata_ids_to_like = set()
         songs_needing_search = []
         
-        for song_str in request.songs:
+        for song_str in payload.songs:
             # Try to parse "Title - Artist"
             parts = song_str.split(" - ", 1)
             if len(parts) == 2:
@@ -105,7 +108,8 @@ async def post_suggestions(
                 logger.warning("Failed to read prev_recs from Redis: %s", e)
 
         with track_latency("MLEngine:SemanticSearch"):
-            ai_suggestions = suggestion_service.get_recommendations(
+            ai_suggestions = await asyncio.to_thread(
+                suggestion_service.get_recommendations,
                 user_history=[s.to_dict() for s in user_likes],
                 repo=repo,
                 top_n=10,
@@ -113,7 +117,10 @@ async def post_suggestions(
             )
 
         if not ai_suggestions:
-            ai_suggestions = suggestion_service.get_suggestions(user, repo, genre=request.genre)
+            ai_suggestions = await asyncio.to_thread(
+                suggestion_service.get_suggestions,
+                genre=payload.genre
+            )
 
         response_suggestions = [
             SongSuggestion(
@@ -134,6 +141,8 @@ async def post_suggestions(
                 ]
                 rec_key = f"prev_recs:{user.user_id}"
                 merged = list(previously_recommended | set(new_rec_ids))
+                if len(merged) > 200:
+                    merged = merged[-200:]
                 redis_client.set(rec_key, json.dumps(merged), ex=60 * 60 * 24)
             except Exception as e:
                 logger.warning("Failed to write prev_recs to Redis: %s", e)

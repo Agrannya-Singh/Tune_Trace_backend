@@ -63,17 +63,14 @@ The core engine uses a content-based approach mapping musical attributes into a 
 ### 2. Feature Flags and Logic Toggles
 The architecture supports conditional features that can be toggled via configuration or deployment scale.
 
-*   **Collaborative Filtering (STATUS: INACTIVE)**: The codebase contains an implementation for user-to-user collaborative filtering. This is currently disabled via feature flag to prioritize semantic accuracy for smaller user bases and reduce computational overhead on the B1 tier.
-*   **Diversity Injection (STATUS: ACTIVE)**: To prevent echo chambers, the system performs a weighted random sample from the top 50 semantic matches, ensuring the user sees a mix of high-confidence and "discovery" tracks.
-*   **Repetition Exclusion (STATUS: ACTIVE)**: Uses a Redis-backed bloom filter/set to track recently recommended video IDs. Songs are excluded from the response if they have been suggested to the user within the last 24 hours.
+*   **Diversity Injection (STATUS: ACTIVE)**: To prevent echo chambers, the system performs a weighted random sample from the top semantic matches, ensuring the user sees a mix of high-confidence and "discovery" tracks.
+*   **Repetition Exclusion (STATUS: ACTIVE)**: Uses a Redis-backed cache to track recently recommended video IDs (up to 200). Songs are excluded from the response if they have been suggested to the user recently.
 
-### 3. Fallback and Resilience Hierarchy
-To ensure a "never-empty" response, the system follows a deterministic fallback chain:
+### 3. Fallback and Resilience
+To ensure a "never-empty" response, the system provides a fallback mechanism:
 
 1.  **Tier 1: Semantic Match**: The preferred method using vector similarity.
-2.  **Tier 2: Metadata Heuristic**: If the vector search yields zero results, the system attempts to find songs matching the specific genre tags provided in the request.
-3.  **Tier 3: Genre Trending**: Queries the YouTube Data API for the current top-performing tracks within the user's preferred genre.
-4.  **Tier 4: Global Trending**: The ultimate fallback which retrieves the top global music charts to ensure the user receives valid content regardless of history or catalog state.
+2.  **Tier 2: YouTube Fallback**: If the vector search yields zero results, the system queries the YouTube Data API for the current top-performing tracks within the user's preferred genre (or global hits if no genre is provided).
 
 ---
 

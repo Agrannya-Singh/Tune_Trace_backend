@@ -2,9 +2,12 @@
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, status
+from fastapi import FastAPI, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from config import YOUTUBE_API_KEY
 from redis_utils import redis_client
@@ -19,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(application: FastAPI):
     """Manages startup and shutdown for the application."""
     # --- Startup ---
-    application.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY)
+    application.state.suggestion_service = SuggestionService(api_key=YOUTUBE_API_KEY, redis_client=redis_client)
     logger.info("Application starting up...")
     try:
         with SessionLocal() as session:
@@ -43,6 +46,8 @@ async def lifespan(application: FastAPI):
         logger.info("SuggestionService client closed.")
 
 
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="TuneTrace Semantic Music API",
     description="Generates music suggestions using semantic vector search (pgvector) with genre-based fallback.",
@@ -59,6 +64,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Include Routers ---
 app.include_router(suggestions.router)

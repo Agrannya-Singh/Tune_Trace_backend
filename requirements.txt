@@ -16,6 +16,7 @@ redis
 # Utilities & API Calls
 python-dotenv
 requests
+slowapi
 
 # ML & Semantic Search
 --extra-index-url https://download.pytorch.org/whl/cpu

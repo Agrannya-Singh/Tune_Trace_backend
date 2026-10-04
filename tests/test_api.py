@@ -38,7 +38,7 @@ def test_suggestions_valid_payload(client):
 
     app.dependency_overrides[get_suggestion_service] = lambda: mock_service
     app.dependency_overrides[get_repo] = lambda: mock_repo
-    app.dependency_overrides[get_current_user] = lambda: {"email": "test_user", "uid": "test_uid"}
+    app.dependency_overrides[get_current_user] = lambda: {"email": "test_user", "uid": "test_uid", "email_verified": True}
     
     payload = {
         "user_id": "test_user",
@@ -59,3 +59,17 @@ def test_suggestions_invalid_payload(client):
     # Empty songs list should trigger 422
     response = client.post("/suggestions", json={"user_id": "test_user", "songs": []})
     assert response.status_code == 422
+
+def test_liked_songs_valid(client):
+    from datetime import datetime, timezone
+    mock_repo = MagicMock()
+    mock_repo.get_user_liked_songs.return_value = [("v1", "Title", "Artist", datetime.now(timezone.utc))]
+    app.dependency_overrides[get_repo] = lambda: mock_repo
+    app.dependency_overrides[get_current_user] = lambda: {"email": "test_user", "uid": "test_uid", "email_verified": True}
+    
+    response = client.get("/liked-songs?user_id=test_user")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    
+    app.dependency_overrides.clear()

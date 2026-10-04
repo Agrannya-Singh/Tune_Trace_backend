@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Discovery"])
 
 @router.post("/discover", response_model=DiscoverResponse)
-async def discover_music(
+def discover_music(
     request: DiscoverRequest,
     repo: MusicRepository = Depends(get_repo),
     suggestion_service: SuggestionService = Depends(get_suggestion_service),

@@ -42,6 +42,7 @@ async def get_current_user(
             "uid": decoded["uid"],
             "email": decoded.get("email"),
             "name": decoded.get("name"),
+            "email_verified": decoded.get("email_verified", False),
         }
     except Exception as e:
         import logging

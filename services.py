@@ -2,12 +2,13 @@
 
 import re
 import logging
+import json
+import asyncio
 from typing import Dict, List, Optional, Set
 
 import httpx
 import requests
 
-from db import User
 from repository import MusicRepository
 from engine import ml_engine
 
@@ -38,9 +39,8 @@ class SuggestionService:
         if self.redis_client:
             try:
                 cache_key = f"yt_search:{clean_query}"
-                cached = self.redis_client.get(cache_key)
+                cached = await asyncio.to_thread(self.redis_client.get, cache_key)
                 if cached:
-                    import json
                     logger.info(f"Redis Cache HIT for search: {clean_query}")
                     return json.loads(cached)
             except Exception as e:
@@ -64,7 +64,7 @@ class SuggestionService:
             if not items:
                 # Cache empty result too (to avoid repeated failed searches)
                 if self.redis_client:
-                     self.redis_client.setex(f"yt_search:{clean_query}", 3600 * 24, "null") 
+                     await asyncio.to_thread(self.redis_client.setex, f"yt_search:{clean_query}", 3600 * 24, "null") 
                 return None
             
             snippet = items[0]["snippet"]
@@ -77,8 +77,12 @@ class SuggestionService:
             # 2. Write to Redis Cache
             if self.redis_client:
                 try:
-                    import json
-                    self.redis_client.set(f"yt_search:{clean_query}", json.dumps(result), ex=3600 * 24 * 7) # 1 week cache
+                    await asyncio.to_thread(
+                        self.redis_client.set,
+                        f"yt_search:{clean_query}",
+                        json.dumps(result),
+                        ex=3600 * 24 * 7 # 1 week cache
+                    )
                 except Exception as e:
                     logger.error(f"Redis Write Error: {e}")
 
@@ -96,10 +100,18 @@ class SuggestionService:
             return []
 
         search_term = f"Top {genre} songs" if genre else "Top Global Hits"
-        search_url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&q={search_term}&type=video&videoCategoryId=10&maxResults={num_suggestions}&key={self.api_key}"
+        search_url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "q": search_term,
+            "type": "video",
+            "videoCategoryId": "10",
+            "maxResults": num_suggestions,
+            "key": self.api_key
+        }
 
         try:
-            response = requests.get(search_url)
+            response = requests.get(search_url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
             items = data.get("items", [])
@@ -197,7 +209,7 @@ class SuggestionService:
         ]
         return results
 
-    def get_suggestions(self, user: User, repo: MusicRepository, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
+    def get_suggestions(self, genre: Optional[str] = None, num_suggestions: int = 10) -> List[Dict]:
         """Return fallback suggestions when the semantic ML engine yields no results."""
         # Collaborative filtering is disabled for now.
         return self._get_fallback_suggestions(genre=genre, num_suggestions=num_suggestions)

@@ -1,0 +1,19 @@
+\beamer@sectionintoc {1}{Executive Summary}{2}{0}{1}
+\beamer@sectionintoc {2}{Problem Statement}{3}{0}{2}
+\beamer@sectionintoc {3}{Mathematical Formulation}{4}{0}{3}
+\beamer@sectionintoc {4}{Objectives}{5}{0}{4}
+\beamer@sectionintoc {5}{Literature Survey}{6}{0}{5}
+\beamer@sectionintoc {6}{Literature Survey (Contd.)}{7}{0}{6}
+\beamer@sectionintoc {7}{Research Gap}{8}{0}{7}
+\beamer@sectionintoc {8}{Novelty}{9}{0}{8}
+\beamer@sectionintoc {9}{Proposed Architecture}{10}{0}{9}
+\beamer@sectionintoc {10}{Pipeline Flowchart}{11}{0}{10}
+\beamer@sectionintoc {11}{Data Engineering}{12}{0}{11}
+\beamer@sectionintoc {12}{Vector Search Indexing}{13}{0}{12}
+\beamer@sectionintoc {13}{Sequence Modeling}{14}{0}{13}
+\beamer@sectionintoc {14}{Loss Formulation}{15}{0}{14}
+\beamer@sectionintoc {15}{Evaluation Metrics}{16}{0}{15}
+\beamer@sectionintoc {16}{Results}{17}{0}{16}
+\beamer@sectionintoc {17}{Resilience}{18}{0}{17}
+\beamer@sectionintoc {18}{API Contracts}{19}{0}{18}
+\beamer@sectionintoc {19}{Roadmap \& References}{20}{0}{19}
