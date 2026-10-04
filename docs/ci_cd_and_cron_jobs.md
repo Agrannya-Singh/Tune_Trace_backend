@@ -12,18 +12,31 @@ The TuneTrace backend utilizes GitHub Actions for continuous deployment to Azure
 flowchart TD
     subgraph Triggers["Trigger Events"]
         T1["Push to main (excluding docs/csv/sqlite)"]
+        T_PR["Pull Request to main (excluding docs/csv/sqlite)"]
         T2["Cron: 0 2 * * * (Daily @ 02:00 UTC)"]
         T3["Cron: 0 0 * * 0 (Weekly Sun @ 00:00 UTC)"]
         T4["workflow_dispatch (Manual Run via CLI / UI)"]
     end
 
-    subgraph CI_CD["deploy_to_azure.yml (CD Pipeline)"]
-        CD1["Checkout & Setup Python 3.11"]
-        CD2["Cache / Pre-download ML Weights (all-MiniLM-L6-v2)"]
-        CD3["Run Alembic DB Migrations (alembic upgrade head)"]
-        CD4["OIDC Azure Login & ACR Authentication"]
-        CD5["Docker Build with Baked Models & Push to ACR"]
-        CD6["Deploy Container to Azure App Service (song-suggest-fastapi)"]
+    subgraph CI_CD["deploy_to_azure.yml (CI/CD Pipeline)"]
+        subgraph Test_Gate["Job: test (Automated Quality Gate)"]
+            T_CO["Checkout code & Setup Python 3.11 with pip cache"]
+            T_DEP["Install dependencies (requirements.txt + pytest)"]
+            T_RUN["Run Test Suite (pytest -v)"]
+            T_CO --> T_DEP --> T_RUN
+        end
+
+        subgraph Deploy_Stage["Job: build-and-deploy (needs: test, if != PR)"]
+            CD1["Checkout & Setup Python 3.11"]
+            CD2["Cache / Pre-download ML Weights (all-MiniLM-L6-v2)"]
+            CD3["Run Alembic DB Migrations (alembic upgrade head)"]
+            CD4["OIDC Azure Login & ACR Authentication"]
+            CD5["Docker Build with Baked Models & Push to ACR"]
+            CD6["Deploy Container to Azure App Service (song-suggest-fastapi)"]
+            CD1 --> CD2 --> CD3 --> CD4 --> CD5 --> CD6
+        end
+
+        T_RUN -->|Passes| CD1
     end
 
     subgraph Cron_Janitor["v3_janitor.yml (Daily Daemon)"]
@@ -49,9 +62,9 @@ flowchart TD
         APP["Azure Web App (song-suggest-fastapi)"]
     end
 
-    T1 --> CD1
-    T4 -.-> CD1
-    CD1 --> CD2 --> CD3 --> CD4 --> CD5 --> CD6
+    T1 --> T_CO
+    T_PR --> T_CO
+    T4 -.-> T_CO
     CD3 --> DB
     CD5 --> ACR
     CD6 --> APP
@@ -119,16 +132,30 @@ flowchart TD
 
 ---
 
-### 2.3. `deploy_to_azure.yml` — Continuous Deployment to Azure
+### 2.3. `deploy_to_azure.yml` — Continuous Integration & Deployment (CI/CD) to Azure
 
 * **File Location**: [`.github/workflows/deploy_to_azure.yml`](../.github/workflows/deploy_to_azure.yml)
-* **Execution Trigger**: Push to `main` branch (path-filtered to ignore `**/*.md`, `**/*.sqlite`, `**/*.csv`) or manual `workflow_dispatch`.
-* **Primary Function**:
-  1. **Model Cache**: Checks GitHub Actions cache for `./models` (`model-all-MiniLM-L6-v2-v1`). If missing, invokes [`utils/download_model.py`](../utils/download_model.py) to pull weights directly into `./models/all-MiniLM-L6-v2`.
-  2. **Database Migrations**: Installs migration dependencies (`alembic`, `sqlalchemy`, `psycopg[binary]`, `psycopg2-binary`, `pgvector`, `python-dotenv`) and runs `alembic upgrade head`.
-  3. **Azure Authentication**: Authenticates with Azure via OIDC using client/tenant/subscription credentials.
-  4. **Docker Image Build & Push**: Builds container with local `./models` context to ensure zero runtime model download overhead in production. Pushes image tagged with commit SHA to Azure Container Registry (`songsouggest.azurecr.io/backend:<sha>`).
-  5. **App Service Rollout**: Updates Azure App Service (`song-suggest-fastapi`) to the newly built container image.
+* **Execution Trigger**:
+  - Push to `main` branch (path-filtered to ignore `**/*.md`, `**/*.sqlite`, `**/*.csv`)
+  - Pull Request targeting `main` (path-filtered to ignore `**/*.md`, `**/*.sqlite`, `**/*.csv`)
+  - Manual execution via `workflow_dispatch`
+* **Job Architecture & Deployment Gating**:
+  The workflow operates in two serialized phases to guarantee that faulty code never deploys to production:
+
+  1. **Phase 1: Automated Test Gate (`job: test`)**:
+     - **Checkout & Environment**: Checks out code and provisions Python 3.11 with pip caching.
+     - **Dependency Installation**: Installs all project dependencies from `requirements.txt` (including `pytest` and `pytest-cov`).
+     - **Test Execution**: Runs `pytest -v` in a completely self-contained in-memory SQLite sandbox with mocked ML engine instances.
+     - **Zero Secret Dependency**: Runs without requiring cloud secrets, making it safe and reliable for all PR evaluations.
+     - **PR Check**: When triggered by a pull request, only this `test` job executes, validating proposed changes without attempting deployment.
+
+  2. **Phase 2: Build, Migrate & Deploy (`job: build-and-deploy`)**:
+     - **Gate Condition**: Requires `needs: test` and only runs when `github.event_name != 'pull_request'` (i.e. pushes to `main` and manual triggers). If any test fails in Phase 1, deployment is strictly aborted.
+     - **Model Cache**: Checks GitHub Actions cache for `./models` (`model-all-MiniLM-L6-v2-v1`). If missing, invokes [`utils/download_model.py`](../utils/download_model.py) to pull weights directly into `./models/all-MiniLM-L6-v2`.
+     - **Database Migrations**: Installs migration dependencies (`alembic`, `sqlalchemy`, `psycopg[binary]`, `psycopg2-binary`, `pgvector`, `python-dotenv`) and runs `alembic upgrade head`.
+     - **Azure Authentication**: Authenticates with Azure via OIDC using client/tenant/subscription credentials.
+     - **Docker Image Build & Push**: Builds container with local `./models` context to ensure zero runtime model download overhead in production. Pushes image tagged with commit SHA to Azure Container Registry (`songsouggest.azurecr.io/backend:<sha>`).
+     - **App Service Rollout**: Updates Azure App Service (`song-suggest-fastapi`) to the newly built container image.
 * **Required Secrets**:
   - `POSTGRES_DATABASE_URL`
   - `AZUREAPPSERVICE_CLIENTID_4AED1299D2C04CAA9208F16E2D318BEA`
