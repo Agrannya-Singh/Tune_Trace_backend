@@ -14,7 +14,51 @@ from models import Base  # Import models to ensure they are registered with Base
 # --- Database Configuration ---
 # ==============================================================================
 
-DATABASE_URL = os.getenv("POSTGRES_DATABASE_URL")
+def normalize_database_url(url: Optional[str]) -> Optional[str]:
+    """
+    Normalizes PostgreSQL connection strings and ensures the appropriate DBAPI driver
+    (psycopg vs psycopg2) is matched against installed packages, preventing
+    ModuleNotFoundError at runtime.
+    """
+    if not url:
+        return url
+
+    # Normalize deprecated postgres:// prefix to postgresql://
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    # Driver availability check
+    has_psycopg = False
+    try:
+        import psycopg  # noqa: F401
+        has_psycopg = True
+    except ImportError:
+        pass
+
+    has_psycopg2 = False
+    try:
+        import psycopg2  # noqa: F401
+        has_psycopg2 = True
+    except ImportError:
+        pass
+
+    # Resolve dialect if psycopg/psycopg2 is specified or default
+    if url.startswith("postgresql+psycopg://"):
+        if not has_psycopg and has_psycopg2:
+            url = url.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql+psycopg2://"):
+        if not has_psycopg2 and has_psycopg:
+            url = url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgresql://"):
+        # Default postgresql:// in SQLAlchemy defaults to psycopg2.
+        # If psycopg2 is absent but psycopg (v3) is present, route to postgresql+psycopg://
+        if not has_psycopg2 and has_psycopg:
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    return url
+
+
+DATABASE_URL = normalize_database_url(os.getenv("POSTGRES_DATABASE_URL"))
 connect_args = {}
 
 # Fallback to a local SQLite database ONLY if PostgreSQL is not configured.

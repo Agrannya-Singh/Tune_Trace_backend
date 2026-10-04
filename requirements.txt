@@ -5,6 +5,7 @@ gunicorn
 
 # Database & Migrations
 sqlalchemy
+psycopg[binary]
 psycopg2-binary
 alembic
 firebase-admin

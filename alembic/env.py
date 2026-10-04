@@ -14,7 +14,7 @@ from alembic import context
 # This makes sure Alembic can find your models in the 'db.py' file.
 # We add the parent directory (your project root) to the Python path.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from db import Base
+from db import Base, normalize_database_url
 
 # Load environment variables from a .env file for local development.
 load_dotenv()
@@ -31,7 +31,7 @@ if config.config_file_name is not None:
 # This is the single source of truth for the database URL.
 # It prioritizes PostgreSQL and falls back to SQLite if the URL is not set.
 
-DATABASE_URL = os.getenv("POSTGRES_DATABASE_URL")
+DATABASE_URL = normalize_database_url(os.getenv("POSTGRES_DATABASE_URL"))
 if DATABASE_URL is None:
     # This is used for local development when running `alembic` commands
     # without a production database environment variable.

@@ -42,7 +42,7 @@ jobs:
         env:
           POSTGRES_DATABASE_URL: ${{ secrets.POSTGRES_DATABASE_URL }}
         run: |
-          pip install alembic sqlalchemy psycopg2-binary pgvector python-dotenv
+          pip install alembic sqlalchemy "psycopg[binary]" psycopg2-binary pgvector python-dotenv
           alembic upgrade head
 
       - name: Azure Login
